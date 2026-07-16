@@ -16,6 +16,8 @@ describe("Folio PostgreSQL migrations", () => {
       "0007_page_tree_management.sql",
       "0008_phase2_collaboration.sql",
       "0009_phase2_completion.sql",
+      "0010_phase3_work_management.sql",
+      "0011_phase3_hardening.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -74,5 +76,31 @@ describe("Folio PostgreSQL migrations", () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0009_phase2_completion.sql"), "utf8");
     expect(sql).toContain("DROP CONSTRAINT IF EXISTS page_links_workspace_id_project_id_source_revision_id_fkey");
     expect(sql).toContain("Application-level polymorphic revision reference");
+  });
+
+  it("defines configurable Phase 3 workflows, issues, portfolio planning, views, and bulk previews", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0010_phase3_work_management.sql"), "utf8");
+    for (const expected of [
+      "CREATE TABLE issue_workflows",
+      "CREATE TABLE issue_workflow_statuses",
+      "CREATE TABLE issue_workflow_transitions",
+      "CREATE TABLE issues",
+      "CREATE TABLE issue_dependencies",
+      "CREATE TABLE issue_comments",
+      "CREATE TABLE issue_attachments",
+      "CREATE TABLE issue_saved_views",
+      "CREATE TABLE issue_bulk_previews",
+      "prevent_issue_hierarchy_cycle",
+      "prevent_blocking_dependency_cycle",
+      "issues_refresh_search",
+    ]) expect(sql).toContain(expected);
+  });
+
+  it("hardens workflow transitions and active portfolio references", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0011_phase3_hardening.sql"), "utf8");
+    expect(sql).toContain("validate_issue_workflow_transition");
+    expect(sql).toContain("issue_workflow_transitions_validate_statuses");
+    expect(sql).toContain("issue_links_no_self_issue_target");
+    expect(sql).toContain("validate_issue_portfolio_references");
   });
 });
