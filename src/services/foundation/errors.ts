@@ -4,6 +4,8 @@ export type FoundationErrorCode =
   | "CAPABILITY_DENIED"
   | "IDEMPOTENCY_CONFLICT"
   | "REVISION_CONFLICT"
+  | "CONFIRMATION_REQUIRED"
+  | "CONFIRMATION_EXPIRED"
   | "CONFLICT";
 
 export class FoundationServiceError extends Error {
