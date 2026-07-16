@@ -11,6 +11,7 @@ import {
 } from "@/services/ecosystem-access";
 import { FoundationServiceError } from "@/services/foundation/errors";
 import { inTransaction } from "@/services/foundation/internal";
+import { authorizeScheduleObject, readTodoListPolicy } from "@/services/schedule-access";
 
 export type AgentActorChain = {
   workspaceId: string;
@@ -83,6 +84,33 @@ export async function authorizeAgentEntityRead(
         principalId,
         entityType: input.entityType,
         entityId: input.entityId,
+      });
+    }
+  });
+}
+
+export async function authorizeAgentTodoListEdit(
+  input: AgentActorChain & { listId: string },
+  pool: Pool = postgresPool(),
+): Promise<void> {
+  await inTransaction(pool, async (client) => {
+    await establishTenantContext(client, input.workspaceId, input.agentPrincipalId);
+    await assertPrincipalKinds(client, input);
+    const policy = await readTodoListPolicy(client, {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      listId: input.listId,
+    });
+    for (const principalId of [input.agentPrincipalId,input.authorizingPrincipalId]) {
+      await authorizeScheduleObject(client, {
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        principalId,
+        capability: "todo.edit",
+        objectType: "todo_list",
+        objectId: input.listId,
+        ownerPrincipalId: policy.ownerPrincipalId,
+        visibility: policy.visibility,
       });
     }
   });
