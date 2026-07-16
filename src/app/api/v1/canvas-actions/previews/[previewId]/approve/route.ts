@@ -26,7 +26,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ pre
       previewId: z.string().uuid().parse(previewId),
       expectedRevision: input.expected_revision,
     }, ecosystemMutationContext(authenticated.session.principalId, context, key));
-    return jsonSuccess(mutationEnvelope("preview", result), context, result.replayed ? 200 : 201);
+    return jsonSuccess({
+      ...mutationEnvelope("preview", result),
+      preview: { ...result.data, state: "approved" as const },
+    }, context, result.replayed ? 200 : 201);
   } catch (error) {
     if (error instanceof z.ZodError) return jsonError("VALIDATION_FAILED", context, 400);
     if (error instanceof FoundationServiceError) return ecosystemServiceError(error, context);
