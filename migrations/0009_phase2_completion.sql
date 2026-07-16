@@ -13,6 +13,60 @@ ALTER TABLE page_search_documents
 COMMENT ON COLUMN page_search_documents.current_revision_id IS
   'Polymorphic current source revision: native revision UUID text or Git snapshot/commit/blob identifier.';
 
+CREATE OR REPLACE FUNCTION mark_page_knowledge_stale()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE page_comment_threads
+     SET anchor_state = 'stale', revision = revision + 1, updated_at = now()
+   WHERE workspace_id = NEW.workspace_id
+     AND project_id = NEW.project_id
+     AND page_id = NEW.page_id
+     AND page_revision_id IS DISTINCT FROM NEW.id
+     AND status = 'open'
+     AND archived_at IS NULL
+     AND anchor_state = 'current';
+
+  UPDATE page_links
+     SET state = 'stale'
+   WHERE workspace_id = NEW.workspace_id
+     AND project_id = NEW.project_id
+     AND source_page_id = NEW.page_id
+     AND source_revision_id IS DISTINCT FROM NEW.id::text
+     AND state = 'current';
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION refresh_native_page_search_document()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  page_title text;
+BEGIN
+  SELECT title INTO page_title
+    FROM pages
+   WHERE workspace_id = NEW.workspace_id
+     AND project_id = NEW.project_id
+     AND id = NEW.page_id;
+
+  INSERT INTO page_search_documents (
+    workspace_id, project_id, page_id, source_type, title, body,
+    current_revision_id, updated_at
+  ) VALUES (
+    NEW.workspace_id, NEW.project_id, NEW.page_id, 'native', page_title,
+    NEW.plain_text, NEW.id::text, now()
+  )
+  ON CONFLICT (workspace_id, project_id, page_id)
+  DO UPDATE SET title = EXCLUDED.title, body = EXCLUDED.body,
+    current_revision_id = EXCLUDED.current_revision_id, updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
 ALTER TABLE page_links
   ADD CONSTRAINT page_links_external_url_length
   CHECK (external_url IS NULL OR length(external_url) <= 2048);
