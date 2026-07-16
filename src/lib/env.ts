@@ -42,6 +42,11 @@ const schema = z.object({
   GITHUB_MAX_SNAPSHOT_FILES: z.coerce.number().int().positive().max(100000).default(10000),
   GITHUB_MAX_SNAPSHOT_BYTES: z.coerce.number().int().positive().default(100 * 1024 * 1024),
 
+  METRICS_BEARER_TOKEN: z.string().min(32).optional(),
+  OPERATIONS_ENVIRONMENT: z.string().min(1).max(120).default("development"),
+  BACKUP_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+  RESTORE_DRILL_MAX_AGE_DAYS: z.coerce.number().int().min(1).max(365).default(90),
+
   DATABASE_PATH: z.string().min(1).default(".local-data/workspace.sqlite"),
   WORKSPACE_ROOTS: z.string().default(""),
   LEGACY_IMPORT_ENABLED: booleanString.default(false),
