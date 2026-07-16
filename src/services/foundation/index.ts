@@ -1,8 +1,7 @@
 export * from "./errors";
 export * from "./identity";
-export { createWorkspaceInvitation } from "./invitations";
+export { acceptWorkspaceInvitation, createWorkspaceInvitation } from "./invitations";
 export {
-  acceptWorkspaceInvitation,
   listWorkspaceInvitations,
   listWorkspaceMembers,
   revokeWorkspaceInvitation,
