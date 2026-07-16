@@ -1,0 +1,84 @@
+import { z } from "zod";
+import { authenticatedRequest, jsonError, jsonSuccess, requestContext } from "@/api";
+import { FoundationServiceError } from "@/services/foundation";
+import { listPageGrants, setPageGrant } from "@/services/page-knowledge";
+import { pageServiceError } from "../../response";
+
+const scopeSchema = z.object({ workspace_id: z.string().uuid(), project_id: z.string().uuid() }).strict();
+const setSchema = scopeSchema.extend({
+  principal_id: z.string().uuid(),
+  capabilities: z.array(z.enum(["page.read", "page.edit", "page.comment", "page.archive"])).min(1),
+  valid_until: z.string().datetime().nullable().optional(),
+  expected_revision: z.number().int().positive().optional(),
+}).strict();
+type RouteContext = { params: Promise<{ pageId: string }> };
+export const dynamic = "force-dynamic";
+
+export async function GET(request: Request, { params }: RouteContext) {
+  const context = requestContext(request);
+  const authenticated = await authenticatedRequest(request, context);
+  if (!authenticated.ok) return authenticated.response;
+  try {
+    const { pageId } = await params;
+    const validatedPageId = z.string().uuid().parse(pageId);
+    const url = new URL(request.url);
+    const scope = scopeSchema.parse({
+      workspace_id: url.searchParams.get("workspace_id"),
+      project_id: url.searchParams.get("project_id"),
+    });
+    const grants = await listPageGrants({
+      workspaceId: scope.workspace_id,
+      projectId: scope.project_id,
+      pageId: validatedPageId,
+    }, authenticated.session.principalId);
+    return jsonSuccess(grants, context);
+  } catch (error) {
+    if (error instanceof z.ZodError) return jsonError("VALIDATION_FAILED", context, 400, {
+      fieldErrors: error.issues.map((issue) => ({ field: issue.path.join("."), code: issue.code, message: issue.message })),
+    });
+    if (error instanceof FoundationServiceError) return pageServiceError(error, context);
+    return jsonError("OPERATION_FAILED", context, 500);
+  }
+}
+
+export async function PUT(request: Request, { params }: RouteContext) {
+  const context = requestContext(request);
+  const authenticated = await authenticatedRequest(request, context);
+  if (!authenticated.ok) return authenticated.response;
+  const idempotencyKey = request.headers.get("idempotency-key")?.trim();
+  if (!idempotencyKey) return jsonError("VALIDATION_FAILED", context, 400, {
+    fieldErrors: [{ field: "Idempotency-Key", code: "required", message: "Required" }],
+  });
+  try {
+    const { pageId } = await params;
+    const validatedPageId = z.string().uuid().parse(pageId);
+    const input = setSchema.parse(await request.json());
+    const result = await setPageGrant({
+      workspaceId: input.workspace_id,
+      projectId: input.project_id,
+      pageId: validatedPageId,
+      principalId: input.principal_id,
+      capabilities: input.capabilities,
+      validUntil: input.valid_until,
+      expectedRevision: input.expected_revision,
+    }, {
+      actorPrincipalId: authenticated.session.principalId,
+      requestId: context.requestId,
+      traceId: context.traceId,
+      idempotencyKey,
+      source: "api",
+    });
+    return jsonSuccess({
+      grant: result.data,
+      activity_id: result.activityId,
+      outbox_event_id: result.outboxEventId,
+      replayed: result.replayed,
+    }, context, result.replayed ? 200 : 201);
+  } catch (error) {
+    if (error instanceof z.ZodError) return jsonError("VALIDATION_FAILED", context, 400, {
+      fieldErrors: error.issues.map((issue) => ({ field: issue.path.join("."), code: issue.code, message: issue.message })),
+    });
+    if (error instanceof FoundationServiceError) return pageServiceError(error, context);
+    return jsonError("OPERATION_FAILED", context, 500);
+  }
+}
