@@ -21,11 +21,11 @@ export function validateScopeRule(value:string){
   if(!rule||rule.length>500||rule.startsWith("/")||rule.includes("\0")||rule.split("/").some((segment)=>segment==="..")){
     throw new FoundationServiceError("VALIDATION_FAILED","Markdown scope rule is invalid.");
   }
-  if(!/^[\p{L}\p{N}._\-/*?{}!()[\] ]+$/u.test(rule))throw new FoundationServiceError("VALIDATION_FAILED","Markdown scope rule contains unsupported characters.");
+  if(/[\x00-\x1f\x7f:]/.test(rule))throw new FoundationServiceError("VALIDATION_FAILED","Markdown scope rule contains unsupported characters.");
   return rule;
 }
 
-function escape(value:string){return value.replace(/[.+^${}()|[\]\\]/g,"\\$&");}
+function escapeRegex(value:string){return value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}
 function globRegex(rule:string){
   let index=0;let output="^";
   while(index<rule.length){
@@ -37,7 +37,7 @@ function globRegex(rule:string){
     }
     if(rule[index]==="*"){output+="[^/]*";index+=1;continue;}
     if(rule[index]==="?"){output+="[^/]";index+=1;continue;}
-    output+=escape(rule[index]!);index+=1;
+    output+=escapeRegex(rule[index]!);index+=1;
   }
   return new RegExp(`${output}$`,"u");
 }
