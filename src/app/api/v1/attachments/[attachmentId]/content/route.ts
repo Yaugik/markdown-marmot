@@ -63,14 +63,21 @@ export async function PUT(request: Request, { params }: RouteContext) {
       workspace_id: url.searchParams.get("workspace_id"),
       project_id: url.searchParams.get("project_id"),
     });
-    const declaredLength = Number(request.headers.get("content-length") ?? "-1");
-    if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > 10 * 1024 * 1024) {
+    const contentLengthHeader = request.headers.get("content-length");
+    const declaredLength = contentLengthHeader === null ? null : Number(contentLengthHeader);
+    if (declaredLength !== null
+      && (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > 10 * 1024 * 1024)) {
       return jsonError("VALIDATION_FAILED", context, 400, {
-        fieldErrors: [{ field: "Content-Length", code: "invalid", message: "Required and limited to 10 MiB" }],
+        fieldErrors: [{ field: "Content-Length", code: "invalid", message: "Must be limited to 10 MiB" }],
       });
     }
     const bytes = new Uint8Array(await request.arrayBuffer());
-    if (bytes.byteLength !== declaredLength) {
+    if (bytes.byteLength > 10 * 1024 * 1024) {
+      return jsonError("VALIDATION_FAILED", context, 413, {
+        fieldErrors: [{ field: "body", code: "too_large", message: "Attachment content is limited to 10 MiB" }],
+      });
+    }
+    if (declaredLength !== null && bytes.byteLength !== declaredLength) {
       return jsonError("VALIDATION_FAILED", context, 400, {
         fieldErrors: [{ field: "body", code: "size_mismatch", message: "Body length differs from Content-Length" }],
       });
