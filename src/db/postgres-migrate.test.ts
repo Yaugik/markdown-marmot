@@ -12,6 +12,7 @@ describe("Folio PostgreSQL migrations", () => {
       "0003_auth_sessions.sql",
       "0004_auth_schema_repair.sql",
       "0005_native_pages.sql",
+      "0006_native_page_lifecycle.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -44,5 +45,11 @@ describe("Folio PostgreSQL migrations", () => {
       "native_page_revisions_immutable",
       "folio_runtime_workspace_scope",
     ]) expect(sql).toContain(expected);
+  });
+
+  it("prevents revisions from being added to archived native pages", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0006_native_page_lifecycle.sql"), "utf8");
+    expect(sql).toContain("enforce_active_native_page_revision");
+    expect(sql).toContain("native_page_revisions_require_active_page");
   });
 });
