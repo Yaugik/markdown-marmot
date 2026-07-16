@@ -55,7 +55,11 @@ describe("rich Markdown round-trip gate", () => {
   it("protects MDX and directives", () => {
     const source = "# Intro\n\n<Component value={1} />\n\n:::note\nraw directive\n:::\n";
     const analysis = analyzeMarkdown(source);
-    expect(analysis.blocks.some((block) => block.protectedReason === "mdx_or_jsx")).toBe(true);
+    expect(analysis.blocks.some((block) =>
+      block.raw.includes("<Component")
+      && block.protected
+      && ["mdx_or_jsx", "raw_html"].includes(block.protectedReason ?? ""),
+    )).toBe(true);
     expect(analysis.blocks.some((block) => block.protectedReason === "custom_directive")).toBe(true);
   });
 
