@@ -36,9 +36,32 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run db:migrate:folio
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test
-      - run: npm run build
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        shell: bash
+        run: npm ci > npm-ci.log 2>&1
+      - name: Upload install log
+        if: steps.install.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-ci-log
+          path: npm-ci.log
+          if-no-files-found: error
+          retention-days: 3
+      - name: Report install failure
+        if: steps.install.outcome == 'failure'
+        shell: bash
+        run: |
+          tail -n 120 npm-ci.log
+          exit 1
+      - if: steps.install.outcome == 'success'
+        run: npm run db:migrate:folio
+      - if: steps.install.outcome == 'success'
+        run: npm run lint
+      - if: steps.install.outcome == 'success'
+        run: npm run typecheck
+      - if: steps.install.outcome == 'success'
+        run: npm run test
+      - if: steps.install.outcome == 'success'
+        run: npm run build
