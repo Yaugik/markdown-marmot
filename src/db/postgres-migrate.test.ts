@@ -32,6 +32,10 @@ describe("Folio PostgreSQL migrations", () => {
       "0023_phase5_audit_export_worker.sql",
       "0024_phase5_phase6_final_security.sql",
       "0025_phase5_phase6_role_capabilities.sql",
+      "0026_phase6_authoritative_actions.sql",
+      "0027_phase6_authoritative_action_hardening.sql",
+      "0028_phase6_agent_preview_access.sql",
+      "0029_phase6_preview_approval_hardening.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -226,5 +230,32 @@ describe("Folio PostgreSQL migrations", () => {
     expect(sql).toContain("canvas.present");
     expect(sql).toContain("template_key='admin'");
     expect(sql).toContain("template_key='member'");
+  });
+
+  it("adds authoritative Canvas action previews and rebuildable relationship provenance", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0026_phase6_authoritative_actions.sql"), "utf8");
+    expect(sql).toContain("CREATE TABLE relationship_derivation_runs");
+    expect(sql).toContain("legacy-derived:");
+    expect(sql).toContain("entity_relationships_derived_run_consistent");
+    expect(sql).toContain("CREATE TABLE canvas_action_previews");
+    expect(sql).toContain("promoted_relationship_id");
+    expect(sql).toContain("canvas_action_previews_creator_scope");
+  });
+
+  it("validates promotion endpoints and preview element scope in PostgreSQL", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0027_phase6_authoritative_action_hardening.sql"), "utf8");
+    expect(sql).toContain("validate_canvas_action_preview_elements");
+    expect(sql).toContain("validate_promoted_canvas_connector");
+    expect(sql).toContain("Promoted connectors require two active entity-card endpoints");
+    expect(sql).toContain("relationship_derivation_runs_supersede_previous");
+  });
+
+  it("shares broad previews only across their immutable actor chain", async () => {
+    const access = await readFile(path.join(process.cwd(), "migrations/0028_phase6_agent_preview_access.sql"), "utf8");
+    expect(access).toContain("authorizing_principal_id");
+    expect(access).toContain("canvas_action_previews_actor_chain_scope");
+    const hardening = await readFile(path.join(process.cwd(), "migrations/0029_phase6_preview_approval_hardening.sql"), "utf8");
+    expect(hardening).toContain("prevent_canvas_action_preview_actor_chain_change");
+    expect(hardening).toContain("Canvas action preview actor chain is immutable");
   });
 });

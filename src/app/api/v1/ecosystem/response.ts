@@ -11,7 +11,7 @@ export function ecosystemServiceError(
 ) {
   const status = error.code === "NOT_FOUND" ? 404
     : error.code === "CAPABILITY_DENIED" ? 403
-      : ["CONFLICT", "IDEMPOTENCY_CONFLICT", "REVISION_CONFLICT"].includes(error.code) ? 409
+      : ["CONFLICT", "IDEMPOTENCY_CONFLICT", "REVISION_CONFLICT", "CONFIRMATION_REQUIRED", "CONFIRMATION_EXPIRED"].includes(error.code) ? 409
         : 400;
   const details = error.code === "REVISION_CONFLICT" ? {
     expected_revision: revisionDetail(error.details.expectedRevision),
