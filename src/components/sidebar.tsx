@@ -20,6 +20,7 @@ const items = [
   { href: "/", label: "Home", icon: Home },
   { href: "/search", label: "Search", icon: Search },
   { href: "/pages", label: "Pages", icon: Files },
+  { href: "/issues", label: "Issues", icon: CircleCheck },
   { href: "/repositories", label: "Repositories", icon: FolderGit2 },
   { href: "/documents", label: "All documents", icon: FileText },
 ];
@@ -41,7 +42,6 @@ export function Sidebar() {
         ))}
         <p className="nav-label nav-spacer">Organize</p>
         <span className="nav-item muted"><Boxes size={17} /><span>Collections</span><em>Soon</em></span>
-        <span className="nav-item muted"><CircleCheck size={17} /><span>Tasks</span><em>Soon</em></span>
         <span className="nav-item muted"><CalendarDays size={17} /><span>Daily view</span><em>Soon</em></span>
       </nav>
       <div className="sidebar-bottom">
