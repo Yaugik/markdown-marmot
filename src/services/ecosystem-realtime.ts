@@ -19,14 +19,183 @@ import {
   readTodoListPolicy,
 } from "@/services/schedule-access";
 
-export type EcosystemRealtimeEvent={cursorId:number;id:string;topicType:string;topicId:string;eventType:string;aggregateRevision:number;actorPrincipalId:string;payload:Record<string,unknown>;occurredAt:string};
-type EventRow={cursor_id:string;id:string;topic_type:string;topic_id:string;event_type:string;aggregate_revision:string;actor_principal_id:string;payload:Record<string,unknown>;occurred_at:Date};
-const map=(row:EventRow,payload=row.payload):EcosystemRealtimeEvent=>({cursorId:Number(row.cursor_id),id:row.id,topicType:row.topic_type,topicId:row.topic_id,eventType:row.event_type,aggregateRevision:Number(row.aggregate_revision),actorPrincipalId:row.actor_principal_id,payload,occurredAt:row.occurred_at.toISOString()});
-async function todoAccess(client:PoolClient,input:{workspaceId:string;projectId:string;principalId:string;todoId:string}){const result=await client.query<{list_id:string}>(`SELECT list_id FROM todos WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.todoId]);if(!result.rows[0])throw new FoundationServiceError("NOT_FOUND","To-do was not found.");const policy=await readTodoListPolicy(client,{...input,listId:result.rows[0].list_id});await authorizeScheduleObject(client,{...input,capability:"todo.read",objectType:"todo_list",objectId:result.rows[0].list_id,ownerPrincipalId:policy.ownerPrincipalId,visibility:policy.visibility});}
-async function entryAccess(client:PoolClient,input:{workspaceId:string;projectId:string;principalId:string;entryId:string}){const result=await client.query<{calendar_id:string}>(`SELECT calendar_id FROM calendar_entries WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.entryId]);if(!result.rows[0])throw new FoundationServiceError("NOT_FOUND","Calendar entry was not found.");const policy=await readCalendarPolicy(client,{...input,calendarId:result.rows[0].calendar_id});await authorizeScheduleObject(client,{...input,capability:"calendar.read",objectType:"calendar",objectId:result.rows[0].calendar_id,ownerPrincipalId:policy.ownerPrincipalId,visibility:policy.visibility});}
-async function listAccess(client:PoolClient,input:{workspaceId:string;projectId:string;principalId:string;listId:string}){const policy=await readTodoListPolicy(client,input);await authorizeScheduleObject(client,{...input,capability:"todo.read",objectType:"todo_list",objectId:input.listId,ownerPrincipalId:policy.ownerPrincipalId,visibility:policy.visibility});}
-async function calendarAccess(client:PoolClient,input:{workspaceId:string;projectId:string;principalId:string;calendarId:string}){const policy=await readCalendarPolicy(client,input);await authorizeScheduleObject(client,{...input,capability:"calendar.read",objectType:"calendar",objectId:input.calendarId,ownerPrincipalId:policy.ownerPrincipalId,visibility:policy.visibility});}
+export type EcosystemRealtimeEvent = {
+  cursorId: number;
+  id: string;
+  topicType: string;
+  topicId: string;
+  eventType: string;
+  aggregateRevision: number;
+  actorPrincipalId: string;
+  payload: Record<string, unknown>;
+  occurredAt: string;
+};
+type EventRow = {
+  cursor_id: string;
+  id: string;
+  topic_type: string;
+  topic_id: string;
+  event_type: string;
+  aggregate_revision: string;
+  actor_principal_id: string;
+  payload: Record<string, unknown>;
+  occurred_at: Date;
+};
+const map = (row: EventRow, payload = row.payload): EcosystemRealtimeEvent => ({
+  cursorId: Number(row.cursor_id),
+  id: row.id,
+  topicType: row.topic_type,
+  topicId: row.topic_id,
+  eventType: row.event_type,
+  aggregateRevision: Number(row.aggregate_revision),
+  actorPrincipalId: row.actor_principal_id,
+  payload,
+  occurredAt: row.occurred_at.toISOString(),
+});
 
-async function visible(client:PoolClient,input:{workspaceId:string;projectId:string;principalId:string;row:EventRow}):Promise<{allowed:boolean;payload?:Record<string,unknown>}>{try{const type=input.row.topic_type;if(type==="page"){await authorizePageCapability(client,{...input,capability:"page.read",pageId:input.row.topic_id});return{allowed:true};}if(type==="issue"){await authorizeIssueCapability(client,{...input,capability:"issue.read",issueId:input.row.topic_id});return{allowed:true};}if(type==="todo_list"){await listAccess(client,{...input,listId:input.row.topic_id});return{allowed:true};}if(type==="calendar"){await calendarAccess(client,{...input,calendarId:input.row.topic_id});return{allowed:true};}if(type==="todo"){await todoAccess(client,{...input,todoId:input.row.topic_id});return{allowed:true};}if(type==="calendar_entry"){await entryAccess(client,{...input,entryId:input.row.topic_id});return{allowed:true};}if(type==="reminder"){const reminder=await client.query<{recipient_principal_id:string;todo_id:string|null;calendar_entry_id:string|null}>(`SELECT recipient_principal_id,todo_id,calendar_entry_id FROM reminders WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.row.topic_id]);const item=reminder.rows[0];if(!item)return{allowed:false};if(item.recipient_principal_id===input.principalId)return{allowed:true};if(item.todo_id){await todoAccess(client,{...input,todoId:item.todo_id});return{allowed:true};}if(item.calendar_entry_id){await entryAccess(client,{...input,entryId:item.calendar_entry_id});return{allowed:true};}return{allowed:false};}if(type==="agent_schedule_grant"){const grant=await client.query<{agent_principal_id:string;authorizing_principal_id:string}>(`SELECT agent_principal_id,authorizing_principal_id FROM agent_schedule_grants WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.row.topic_id]);return{allowed:Boolean(grant.rows[0]&&(grant.rows[0].agent_principal_id===input.principalId||grant.rows[0].authorizing_principal_id===input.principalId))};}if(type==="integration_connection"){const connection=await client.query<{owner_principal_id:string}>(`SELECT owner_principal_id FROM integration_connections WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.row.topic_id]);return{allowed:connection.rows[0]?.owner_principal_id===input.principalId};}if(type==="provider_operation"){const operation=await client.query<{created_by_principal_id:string}>(`SELECT created_by_principal_id FROM provider_operations WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.row.topic_id]);return{allowed:operation.rows[0]?.created_by_principal_id===input.principalId};}if(type==="page_collaboration_room"){const room=await client.query<{page_id:string}>(`SELECT page_id FROM page_collaboration_rooms WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.row.topic_id]);if(!room.rows[0])return{allowed:false};await authorizePageCapability(client,{...input,capability:"page.read",pageId:room.rows[0].page_id});return{allowed:true};}if(type==="relationship"){const relation=await client.query<{source_entity_type:"page"|"issue"|"todo"|"calendar_entry"|"canvas";source_entity_id:string;target_entity_type:"page"|"issue"|"todo"|"calendar_entry"|"canvas";target_entity_id:string}>(`SELECT source_entity_type,source_entity_id,target_entity_type,target_entity_id FROM entity_relationships WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.row.topic_id]);const item=relation.rows[0];if(!item)return{allowed:false};await authorizeGraphEntityRead(client,{...input,entityType:item.source_entity_type,entityId:item.source_entity_id});await authorizeGraphEntityRead(client,{...input,entityType:item.target_entity_type,entityId:item.target_entity_id});return{allowed:true};}if(type==="relationship_type"){await authorizeEcosystemProjectCapability(client,{...input,capability:"relationship.read"});return{allowed:true};}if(type==="graph_view"){const policy=await readGraphViewPolicy(client,{...input,viewId:input.row.topic_id});await authorizeOwnedEcosystemObject(client,{...input,capability:"graph.read",objectType:"graph_view",objectId:input.row.topic_id,ownerPrincipalId:policy.ownerPrincipalId,visibility:policy.visibility});return{allowed:true};}if(type==="canvas"){const policy=await readCanvasPolicy(client,{...input,canvasId:input.row.topic_id});await authorizeOwnedEcosystemObject(client,{...input,capability:"canvas.read",objectType:"canvas",objectId:input.row.topic_id,ownerPrincipalId:policy.ownerPrincipalId,visibility:policy.visibility});const payload={...input.row.payload};delete payload.visibleElementCount;return{allowed:true,payload};}if(type==="scale_measurement"||type==="scale_decision"){await authorizeEcosystemProjectCapability(client,{...input,capability:"scale.read"});return{allowed:true};}if(type==="audit_export"){const item=await client.query<{requested_by_principal_id:string}>(`SELECT requested_by_principal_id FROM audit_export_requests WHERE workspace_id=$1 AND project_id=$2 AND id=$3`,[input.workspaceId,input.projectId,input.row.topic_id]);if(item.rows[0]?.requested_by_principal_id===input.principalId)return{allowed:true};await authorizeEcosystemProjectCapability(client,{...input,capability:"audit.export"});return{allowed:true};}if(type==="project")return{allowed:input.row.topic_id===input.projectId};return{allowed:false};}catch(error){if(error instanceof FoundationServiceError&&["NOT_FOUND","CAPABILITY_DENIED"].includes(error.code))return{allowed:false};throw error;}}
+async function todoAccess(client: PoolClient, input: { workspaceId: string; projectId: string; principalId: string; todoId: string }) {
+  const result = await client.query<{ list_id: string }>(`SELECT list_id FROM todos WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.todoId]);
+  if (!result.rows[0]) throw new FoundationServiceError("NOT_FOUND", "To-do was not found.");
+  const policy = await readTodoListPolicy(client, { ...input, listId: result.rows[0].list_id });
+  await authorizeScheduleObject(client, { ...input, capability: "todo.read", objectType: "todo_list", objectId: result.rows[0].list_id, ownerPrincipalId: policy.ownerPrincipalId, visibility: policy.visibility });
+}
+async function entryAccess(client: PoolClient, input: { workspaceId: string; projectId: string; principalId: string; entryId: string }) {
+  const result = await client.query<{ calendar_id: string }>(`SELECT calendar_id FROM calendar_entries WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.entryId]);
+  if (!result.rows[0]) throw new FoundationServiceError("NOT_FOUND", "Calendar entry was not found.");
+  const policy = await readCalendarPolicy(client, { ...input, calendarId: result.rows[0].calendar_id });
+  await authorizeScheduleObject(client, { ...input, capability: "calendar.read", objectType: "calendar", objectId: result.rows[0].calendar_id, ownerPrincipalId: policy.ownerPrincipalId, visibility: policy.visibility });
+}
+async function listAccess(client: PoolClient, input: { workspaceId: string; projectId: string; principalId: string; listId: string }) {
+  const policy = await readTodoListPolicy(client, input);
+  await authorizeScheduleObject(client, { ...input, capability: "todo.read", objectType: "todo_list", objectId: input.listId, ownerPrincipalId: policy.ownerPrincipalId, visibility: policy.visibility });
+}
+async function calendarAccess(client: PoolClient, input: { workspaceId: string; projectId: string; principalId: string; calendarId: string }) {
+  const policy = await readCalendarPolicy(client, input);
+  await authorizeScheduleObject(client, { ...input, capability: "calendar.read", objectType: "calendar", objectId: input.calendarId, ownerPrincipalId: policy.ownerPrincipalId, visibility: policy.visibility });
+}
 
-export async function readEcosystemRealtimeEvents(input:{workspaceId:string;projectId:string;afterCursor?:number;limit?:number;topicType?:string;topicId?:string},principalId:string,pool:Pool=postgresPool()):Promise<{events:EcosystemRealtimeEvent[];nextCursor:number}>{const after=Math.max(0,input.afterCursor??0);const limit=Math.max(1,Math.min(input.limit??100,500));return inTransaction(pool,async(client)=>{await establishTenantContext(client,input.workspaceId,principalId);await authorizeScheduleProjectCapability(client,{workspaceId:input.workspaceId,projectId:input.projectId,principalId,capability:"realtime.read"});const result=await client.query<EventRow>(`SELECT cursor_id,id,topic_type,topic_id,event_type,aggregate_revision,actor_principal_id,payload,occurred_at FROM realtime_event_log WHERE workspace_id=$1 AND project_id=$2 AND cursor_id>$3 AND ($4::text IS NULL OR topic_type=$4) AND ($5::uuid IS NULL OR topic_id=$5) ORDER BY cursor_id LIMIT $6`,[input.workspaceId,input.projectId,after,input.topicType??null,input.topicId??null,limit*12]);const events:EcosystemRealtimeEvent[]=[];let cursor=after;for(const row of result.rows){cursor=Math.max(cursor,Number(row.cursor_id));const decision=await visible(client,{workspaceId:input.workspaceId,projectId:input.projectId,principalId,row});if(decision.allowed)events.push(map(row,decision.payload??row.payload));if(events.length>=limit)break;}return{events,nextCursor:cursor};});}
+async function visible(
+  client: PoolClient,
+  input: { workspaceId: string; projectId: string; principalId: string; row: EventRow },
+): Promise<{ allowed: boolean; payload?: Record<string, unknown> }> {
+  try {
+    const type = input.row.topic_type;
+    if (type === "page") {
+      await authorizePageCapability(client, { ...input, capability: "page.read", pageId: input.row.topic_id });
+      return { allowed: true };
+    }
+    if (type === "issue") {
+      await authorizeIssueCapability(client, { ...input, capability: "issue.read", issueId: input.row.topic_id });
+      return { allowed: true };
+    }
+    if (type === "todo_list") { await listAccess(client, { ...input, listId: input.row.topic_id }); return { allowed: true }; }
+    if (type === "calendar") { await calendarAccess(client, { ...input, calendarId: input.row.topic_id }); return { allowed: true }; }
+    if (type === "todo") { await todoAccess(client, { ...input, todoId: input.row.topic_id }); return { allowed: true }; }
+    if (type === "calendar_entry") { await entryAccess(client, { ...input, entryId: input.row.topic_id }); return { allowed: true }; }
+    if (type === "reminder") {
+      const reminder = await client.query<{ recipient_principal_id: string; todo_id: string | null; calendar_entry_id: string | null }>(`SELECT recipient_principal_id,todo_id,calendar_entry_id FROM reminders WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      const item = reminder.rows[0];
+      if (!item) return { allowed: false };
+      if (item.recipient_principal_id === input.principalId) return { allowed: true };
+      if (item.todo_id) { await todoAccess(client, { ...input, todoId: item.todo_id }); return { allowed: true }; }
+      if (item.calendar_entry_id) { await entryAccess(client, { ...input, entryId: item.calendar_entry_id }); return { allowed: true }; }
+      return { allowed: false };
+    }
+    if (type === "agent_schedule_grant") {
+      const grant = await client.query<{ agent_principal_id: string; authorizing_principal_id: string }>(`SELECT agent_principal_id,authorizing_principal_id FROM agent_schedule_grants WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      return { allowed: Boolean(grant.rows[0] && (grant.rows[0].agent_principal_id === input.principalId || grant.rows[0].authorizing_principal_id === input.principalId)) };
+    }
+    if (type === "integration_connection") {
+      const connection = await client.query<{ owner_principal_id: string }>(`SELECT owner_principal_id FROM integration_connections WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      return { allowed: connection.rows[0]?.owner_principal_id === input.principalId };
+    }
+    if (type === "provider_operation") {
+      const operation = await client.query<{ created_by_principal_id: string }>(`SELECT created_by_principal_id FROM provider_operations WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      return { allowed: operation.rows[0]?.created_by_principal_id === input.principalId };
+    }
+    if (type === "page_collaboration_room") {
+      const room = await client.query<{ page_id: string }>(`SELECT page_id FROM page_collaboration_rooms WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      if (!room.rows[0]) return { allowed: false };
+      await authorizePageCapability(client, { ...input, capability: "page.read", pageId: room.rows[0].page_id });
+      return { allowed: true };
+    }
+    if (type === "relationship") {
+      const relation = await client.query<{ source_entity_type: "page"|"issue"|"todo"|"calendar_entry"|"canvas"; source_entity_id: string; target_entity_type: "page"|"issue"|"todo"|"calendar_entry"|"canvas"; target_entity_id: string }>(`SELECT source_entity_type,source_entity_id,target_entity_type,target_entity_id FROM entity_relationships WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      const item = relation.rows[0];
+      if (!item) return { allowed: false };
+      await authorizeGraphEntityRead(client, { ...input, entityType: item.source_entity_type, entityId: item.source_entity_id });
+      await authorizeGraphEntityRead(client, { ...input, entityType: item.target_entity_type, entityId: item.target_entity_id });
+      return { allowed: true };
+    }
+    if (type === "relationship_type") {
+      await authorizeEcosystemProjectCapability(client, { ...input, capability: "relationship.read" });
+      return { allowed: true };
+    }
+    if (type === "relationship_derivation_run") {
+      const run = await client.query<{ source_entity_type: "page"|"issue"|"todo"|"calendar_entry"|"canvas"; source_entity_id: string }>(`SELECT source_entity_type,source_entity_id FROM relationship_derivation_runs WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      if (!run.rows[0]) return { allowed: false };
+      await authorizeEcosystemProjectCapability(client, { ...input, capability: "relationship.read" });
+      await authorizeGraphEntityRead(client, { ...input, entityType: run.rows[0].source_entity_type, entityId: run.rows[0].source_entity_id });
+      return { allowed: true, payload: { derivationRunId: input.row.topic_id, sourceType: run.rows[0].source_entity_type, sourceId: run.rows[0].source_entity_id } };
+    }
+    if (type === "graph_view") {
+      const policy = await readGraphViewPolicy(client, { ...input, viewId: input.row.topic_id });
+      await authorizeOwnedEcosystemObject(client, { ...input, capability: "graph.read", objectType: "graph_view", objectId: input.row.topic_id, ownerPrincipalId: policy.ownerPrincipalId, visibility: policy.visibility });
+      return { allowed: true };
+    }
+    if (type === "canvas") {
+      const policy = await readCanvasPolicy(client, { ...input, canvasId: input.row.topic_id });
+      await authorizeOwnedEcosystemObject(client, { ...input, capability: "canvas.read", objectType: "canvas", objectId: input.row.topic_id, ownerPrincipalId: policy.ownerPrincipalId, visibility: policy.visibility });
+      const payload = { ...input.row.payload };
+      delete payload.visibleElementCount;
+      delete payload.organizedElementIds;
+      return { allowed: true, payload };
+    }
+    if (type === "canvas_action_preview") {
+      const preview = await client.query<{ canvas_id: string; action_kind: string; created_by_principal_id: string; authorizing_principal_id: string }>(`SELECT canvas_id,action_kind,created_by_principal_id,authorizing_principal_id FROM canvas_action_previews WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      const item = preview.rows[0];
+      if (!item || (item.created_by_principal_id !== input.principalId && item.authorizing_principal_id !== input.principalId)) return { allowed: false };
+      const policy = await readCanvasPolicy(client, { ...input, canvasId: item.canvas_id });
+      await authorizeOwnedEcosystemObject(client, { ...input, capability: "canvas.read", objectType: "canvas", objectId: item.canvas_id, ownerPrincipalId: policy.ownerPrincipalId, visibility: policy.visibility });
+      return { allowed: true, payload: { previewId: input.row.topic_id, canvasId: item.canvas_id, actionKind: item.action_kind } };
+    }
+    if (type === "scale_measurement" || type === "scale_decision") {
+      await authorizeEcosystemProjectCapability(client, { ...input, capability: "scale.read" });
+      return { allowed: true };
+    }
+    if (type === "audit_export") {
+      const item = await client.query<{ requested_by_principal_id: string }>(`SELECT requested_by_principal_id FROM audit_export_requests WHERE workspace_id=$1 AND project_id=$2 AND id=$3`, [input.workspaceId,input.projectId,input.row.topic_id]);
+      if (item.rows[0]?.requested_by_principal_id === input.principalId) return { allowed: true };
+      await authorizeEcosystemProjectCapability(client, { ...input, capability: "audit.export" });
+      return { allowed: true };
+    }
+    if (type === "project") return { allowed: input.row.topic_id === input.projectId };
+    return { allowed: false };
+  } catch (error) {
+    if (error instanceof FoundationServiceError && ["NOT_FOUND","CAPABILITY_DENIED"].includes(error.code)) return { allowed: false };
+    throw error;
+  }
+}
+
+export async function readEcosystemRealtimeEvents(
+  input: { workspaceId: string; projectId: string; afterCursor?: number; limit?: number; topicType?: string; topicId?: string },
+  principalId: string,
+  pool: Pool = postgresPool(),
+): Promise<{ events: EcosystemRealtimeEvent[]; nextCursor: number }> {
+  const after = Math.max(0,input.afterCursor ?? 0);
+  const limit = Math.max(1,Math.min(input.limit ?? 100,500));
+  return inTransaction(pool, async (client) => {
+    await establishTenantContext(client,input.workspaceId,principalId);
+    await authorizeScheduleProjectCapability(client,{ workspaceId:input.workspaceId,projectId:input.projectId,principalId,capability:"realtime.read" });
+    const result = await client.query<EventRow>(`SELECT cursor_id,id,topic_type,topic_id,event_type,aggregate_revision,actor_principal_id,payload,occurred_at FROM realtime_event_log WHERE workspace_id=$1 AND project_id=$2 AND cursor_id>$3 AND ($4::text IS NULL OR topic_type=$4) AND ($5::uuid IS NULL OR topic_id=$5) ORDER BY cursor_id LIMIT $6`, [input.workspaceId,input.projectId,after,input.topicType ?? null,input.topicId ?? null,limit * 12]);
+    const events: EcosystemRealtimeEvent[] = [];
+    let cursor = after;
+    for (const row of result.rows) {
+      cursor = Math.max(cursor,Number(row.cursor_id));
+      const decision = await visible(client,{ workspaceId:input.workspaceId,projectId:input.projectId,principalId,row });
+      if (decision.allowed) events.push(map(row,decision.payload ?? row.payload));
+      if (events.length >= limit) break;
+    }
+    return { events, nextCursor: cursor };
+  });
+}
