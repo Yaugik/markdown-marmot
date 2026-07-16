@@ -35,13 +35,16 @@ export function issueResponse(issue: Issue) {
       kind: assignee.kind,
       assignment_role: assignee.assignmentRole,
     })),
-    labels: issue.labels.map((label) => ({ id: label.id, name: label.name, color_key: label.colorKey })),
+    labels: issue.labels.map((label) => ({
+      id: label.id,
+      name: label.name,
+      color_key: label.colorKey,
+    })),
     dependencies: issue.dependencies.map((dependency) => ({
       id: dependency.id,
-      source_issue_id: dependency.sourceIssueId,
-      target_issue_id: dependency.targetIssueId,
       relation_kind: dependency.relationKind,
     })),
+    relationship_count: issue.dependencies.length,
     created_by_principal_id: issue.createdByPrincipalId,
     updated_by_principal_id: issue.updatedByPrincipalId,
     created_at: issue.createdAt,
@@ -54,7 +57,10 @@ function revisionDetail(value: unknown): string | number | null {
   return typeof value === "string" || typeof value === "number" ? value : null;
 }
 
-export function issueServiceError(error: FoundationServiceError, context: ReturnType<typeof requestContext>) {
+export function issueServiceError(
+  error: FoundationServiceError,
+  context: ReturnType<typeof requestContext>,
+) {
   const status = error.code === "NOT_FOUND" ? 404
     : error.code === "CAPABILITY_DENIED" ? 403
       : ["CONFLICT", "IDEMPOTENCY_CONFLICT", "REVISION_CONFLICT"].includes(error.code) ? 409
