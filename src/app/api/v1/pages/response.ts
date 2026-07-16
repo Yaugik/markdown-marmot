@@ -35,14 +35,18 @@ export function pageResponse(page: NativePage) {
   };
 }
 
+function revisionDetail(value: unknown): string | number | null {
+  return typeof value === "string" || typeof value === "number" ? value : null;
+}
+
 export function pageServiceError(error: FoundationServiceError, context: ReturnType<typeof requestContext>) {
   const status = error.code === "NOT_FOUND" ? 404
     : error.code === "CAPABILITY_DENIED" ? 403
       : ["CONFLICT", "IDEMPOTENCY_CONFLICT", "REVISION_CONFLICT"].includes(error.code) ? 409
         : 400;
   const details = error.code === "REVISION_CONFLICT" ? {
-    expected_revision: Number(error.details.expectedRevision),
-    current_revision: Number(error.details.currentRevision),
+    expected_revision: revisionDetail(error.details.expectedRevision),
+    current_revision: revisionDetail(error.details.currentRevision),
   } : undefined;
   return jsonError(error.code, context, status, { details });
 }
