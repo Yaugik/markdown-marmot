@@ -6,7 +6,7 @@ Updated: 2026-07-16
 
 The Phase 3 work-management implementation is complete on `agent/phase-3-work-management` as a stacked review candidate based on the completed Phase 2 page workspace.
 
-The branch intentionally remains a draft-review candidate until the complete repository can be checked out on a developer machine and the full migration, lint, typecheck, test, and production-build commands are run without GitHub Actions.
+The branch remains a draft-review candidate until the complete repository can be checked out on a developer machine and the full migration, lint, typecheck, test, and production-build commands are run without GitHub Actions.
 
 ## Delivered
 
@@ -15,8 +15,8 @@ The branch intentionally remains a draft-review candidate until the complete rep
 - Project-scoped workflow definitions with stable IDs and revisions.
 - Exactly one initial status per workflow.
 - Backlog, planned, in-progress, completed, and canceled status categories.
-- Explicit allowed status-transition graph.
-- Optional transition-comment requirements.
+- Explicit allowed status-transition graphs.
+- Optional transition-comment requirements for individual and bulk transitions.
 - Revision-checked status metadata and ordering updates.
 - Idempotent default workflow creation for projects creating their first issue.
 - PostgreSQL enforcement that transition endpoints belong to the selected workflow.
@@ -31,6 +31,7 @@ The branch intentionally remains a draft-review candidate until the complete rep
 - Assignees and labels restricted to active project members and labels.
 - Archive and restore without deleting issue history.
 - Parent archive protection while active child issues remain.
+- Parent-first restore behavior in the service and a deferred PostgreSQL active-parent invariant.
 - Object-grant-aware issue authorization.
 
 ### Relationships and collaboration
@@ -41,14 +42,17 @@ The branch intentionally remains a draft-review candidate until the complete rep
 - Revision-checked relationship creation and removal.
 - Links to issues, pages, and bounded HTTP(S) resources.
 - Reversible issue-link lifecycle.
-- Page authorization is reused for issue-to-page links.
+- Page authorization reused for issue-to-page links.
+- Permission-filtered relationship reads that omit unreadable issue/page targets.
+- Relationship deletion bound to the issue ID in the route before mutation.
+- General issue envelopes omit relationship targets and hidden relationship counts.
 
 ### Attachments
 
 - Bounded 10 MiB issue and issue-comment attachment preparation.
 - Exact size and SHA-256 verification.
 - Authenticated private upload and download.
-- Safe content-disposition and no-store delivery.
+- Safe content disposition and no-store delivery.
 - Development object storage under `.local-data/issue-attachments`.
 
 ### Portfolio planning
@@ -58,29 +62,34 @@ The branch intentionally remains a draft-review candidate until the complete rep
 - Cycles with bounded start/end dates and state.
 - Project/private roadmaps.
 - Revision-checked roadmap placement with optional issue start/end overrides.
-- Active milestone and cycle enforcement for new issue references.
+- Active milestone and cycle enforcement for new and bulk issue references.
 - Reversible dependency history through active-only uniqueness.
 
 ### Saved views and projections
 
 - Private and project-visible saved views.
-- Object-grant sharing for private views.
-- Permission-filtered saved-view discovery.
+- Object-grant sharing and discovery for private views.
+- Project-visible view discovery restricted to project-wide issue readers.
+- Publishing or editing a project-visible view requires `project.update`.
 - Filters for status, label, assignee, priority, milestone, cycle, parent, archived state, and search query.
 - Deterministic multi-field ordering.
 - Grouping by status, priority, assignee, label, milestone, or cycle.
 - List, board, timeline, and calendar projections over the same permission-filtered issue query.
+- A shared private view never broadens the recipient's issue access.
 
 ### Bulk safety
 
 - Bulk patch, transition, archive, and restore previews.
-- Target revision/status/workflow/lifecycle snapshots.
+- Target revision/status/workflow/lifecycle/parent snapshots.
 - Accessible, unavailable, and blocked impact counts.
-- Fifteen-minute preview expiry.
+- Fifteen-minute preview expiry with explicit expired-state errors.
+- Creator-scoped PostgreSQL row-level security for previews.
 - R2 confirmation for more than ten accessible issues.
 - Confirmation bound to the exact action digest and authorizing principal.
 - Single-use confirmation consumption.
 - Per-issue authorization and revision revalidation at execution.
+- Child-first archive and parent-first restore ordering.
+- Per-target savepoints so validation and database-invariant failures become partial results rather than aborting the batch.
 - Partial results with explicit succeeded and failed targets.
 - Individual redacted activity and outbox records for every successful issue mutation.
 
@@ -90,7 +99,7 @@ The branch intentionally remains a draft-review candidate until the complete rep
 - Issue creation and searchable project projections.
 - List, board, timeline, and calendar modes.
 - Private saved-view creation and reuse.
-- Issue selection, workflow transitions, comments, dates, priority, relationship counts, and attachments.
+- Issue selection, workflow transitions, comments, dates, priority, and attachments.
 - Multi-select bulk archive preview and confirmation flow.
 - Responsive desktop and narrow-screen layouts.
 
@@ -151,13 +160,25 @@ The branch intentionally remains a draft-review candidate until the complete rep
 - issue attachment integrity and authenticated reads;
 - activity summaries that exclude sensitive full description content.
 
-Migration assertions cover deterministic ordering through `0011_phase3_hardening.sql` and verify the Phase 3 workflow, issue, cycle-prevention, search, bulk-preview, and portfolio-reference invariants.
+`src/services/phase3-security.integration.test.ts` adds focused coverage for:
+
+- hidden dependency and issue-link targets not being returned to an object-only reader;
+- creator-owned bulk previews not being readable by another project member;
+- a non-admin saved-view owner being unable to publish a private view;
+- child restoration being rejected until its parent is active;
+- a mixed bulk patch returning one success and one validation failure without rolling back the success.
+
+`src/services/phase3-saved-view-policy.integration.test.ts` verifies that an object-granted private view is discoverable while its projection remains empty when the recipient has no issue grants.
+
+Migration assertions cover deterministic ordering through `0012_phase3_security_hardening.sql` and verify the workflow, hierarchy, dependency, search, portfolio, active-parent, and creator-scoped preview invariants.
 
 ## Verification boundary
 
 No GitHub Actions workflow is included, following the requested testing preference.
 
-This environment cannot materialize the complete GitHub branch into a local checkout because direct GitHub archive and clone access is unavailable. The implementation received connector-level file, schema, import-path, pinned-dependency, and branch-diff review. Full executable verification remains:
+This environment cannot materialize the complete GitHub branch into a local checkout because direct GitHub archive and clone access is unavailable. The implementation received connector-level file, schema, import-path, authorization, transaction, and branch-diff review. The acceptance tests above are committed but have not been executed in this environment.
+
+Full executable verification remains:
 
 1. `npm install`
 2. `npm run db:migrate:folio`
@@ -171,6 +192,5 @@ The repository's existing stale lockfile still prevents deterministic `npm ci` u
 ## Out of Phase 3
 
 - To-dos, reminders, recurrence, and the mixed calendar are Phase 4.
-- Agent runtime, tool execution, and automations are Phase 5.
-- Realtime collaboration, graph, and Canvas are Phase 6.
+- Realtime collaboration, scale extraction, enterprise integrations, graph, and Canvas remain later phases.
 - Production S3-compatible attachment storage and GitHub provider execution remain their existing Phase 0/1 deployment boundaries.
