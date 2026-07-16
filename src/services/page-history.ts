@@ -1,10 +1,16 @@
-import type { Pool, PoolClient } from "pg";
-import { evaluateProjectCapability, type ProjectCapability } from "@/auth/capabilities";
+import type { Pool } from "pg";
 import { postgresPool } from "@/db/postgres";
 import { establishTenantContext } from "@/db/tenant";
 import { FoundationServiceError } from "@/services/foundation/errors";
-import { findIdempotentResult, inTransaction, lockIdempotencyKey, recordMutation, requestDigest } from "@/services/foundation/internal";
+import {
+  findIdempotentResult,
+  inTransaction,
+  lockIdempotencyKey,
+  recordMutation,
+  requestDigest,
+} from "@/services/foundation/internal";
 import type { MutationContext, MutationResult } from "@/services/foundation/types";
+import { assertPageExists, authorizePageCapability } from "@/services/page-access";
 import type { ProseMirrorNode } from "@/services/pages";
 
 export type NativePageRevisionSummary = {
@@ -17,25 +23,16 @@ export type NativePageRevisionSummary = {
   parentRevisionId: string | null;
   createdAt: string;
 };
-
 export type NativePageRevision = NativePageRevisionSummary & {
   content: ProseMirrorNode;
   plainText: string;
 };
-
 export type NativePageLifecycleResult = {
   pageId: string;
   status: "active" | "archived";
   revision: number;
   archivedAt: string | null;
   updatedAt: string;
-};
-
-type AccessRow = {
-  workspace_status: string;
-  project_status: string;
-  membership_status: string;
-  capabilities: string[];
 };
 
 type RevisionRow = {
@@ -50,54 +47,6 @@ type RevisionRow = {
   parent_revision_id: string | null;
   created_at: Date;
 };
-
-async function authorize(
-  client: PoolClient,
-  workspaceId: string,
-  projectId: string,
-  principalId: string,
-  capability: ProjectCapability,
-) {
-  const access = await client.query<AccessRow>(`
-    SELECT w.status workspace_status, p.status project_status,
-      pm.status membership_status, rt.capabilities
-    FROM projects p
-    JOIN workspaces w ON w.id = p.workspace_id
-    JOIN project_memberships pm
-      ON pm.workspace_id = p.workspace_id AND pm.project_id = p.id AND pm.principal_id = $3
-    JOIN workspace_memberships wm
-      ON wm.workspace_id = p.workspace_id AND wm.principal_id = pm.principal_id
-    JOIN role_templates rt
-      ON rt.workspace_id = pm.workspace_id AND rt.id = pm.role_template_id
-    WHERE p.workspace_id = $1 AND p.id = $2
-      AND wm.status = 'active' AND rt.archived_at IS NULL
-  `, [workspaceId, projectId, principalId]);
-  const row = access.rows[0];
-  if (!row) throw new FoundationServiceError("CAPABILITY_DENIED", "Active project membership is required.");
-
-  const grants = await client.query<{ capability: ProjectCapability; effect: "allow" | "deny" }>(`
-    SELECT capability, effect
-    FROM capability_grants
-    WHERE workspace_id = $1 AND (project_id = $2 OR project_id IS NULL)
-      AND principal_id = $3 AND capability = $4
-      AND valid_from <= now() AND (valid_until IS NULL OR valid_until > now())
-  `, [workspaceId, projectId, principalId, capability]);
-
-  const decision = evaluateProjectCapability({
-    capability,
-    workspaceActive: row.workspace_status === "active",
-    projectActive: row.project_status === "active",
-    membershipActive: row.membership_status === "active",
-    roleCapabilities: new Set(row.capabilities as ProjectCapability[]),
-    allowedGrants: new Set(grants.rows.filter((grant) => grant.effect === "allow").map((grant) => grant.capability)),
-    deniedGrants: new Set(grants.rows.filter((grant) => grant.effect === "deny").map((grant) => grant.capability)),
-  });
-  if (!decision.allowed) {
-    throw new FoundationServiceError("CAPABILITY_DENIED", "The page capability is not permitted.", {
-      reason: decision.reason,
-    });
-  }
-}
 
 function validateExpectedRevision(value: number) {
   if (!Number.isSafeInteger(value) || value < 1) {
@@ -119,10 +68,8 @@ function mapRevision(row: RevisionRow): NativePageRevision {
     createdAt: row.created_at.toISOString(),
   };
 }
-
 function mapRevisionSummary(row: RevisionRow): NativePageRevisionSummary {
-  const revision = mapRevision(row);
-  const { content: _content, plainText: _plainText, ...summary } = revision;
+  const { content: _content, plainText: _plainText, ...summary } = mapRevision(row);
   return summary;
 }
 
@@ -146,7 +93,6 @@ async function setLifecycle(
   validateExpectedRevision(input.expectedRevision);
   const operation = targetStatus === "archived" ? "native_page.archive" : "native_page.restore";
   const digest = requestDigest(input);
-
   return inTransaction(pool, async (client) => {
     await establishTenantContext(client, input.workspaceId, context.actorPrincipalId);
     await lockIdempotencyKey(client, context.actorPrincipalId, operation, context.idempotencyKey);
@@ -159,8 +105,13 @@ async function setLifecycle(
       digest,
     });
     if (replay) return replay;
-
-    await authorize(client, input.workspaceId, input.projectId, context.actorPrincipalId, "page.archive");
+    await authorizePageCapability(client, {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      principalId: context.actorPrincipalId,
+      capability: "page.archive",
+      pageId: input.pageId,
+    });
     const current = await client.query<{ status: string; revision: string }>(`
       SELECT status, revision
       FROM pages
@@ -169,7 +120,6 @@ async function setLifecycle(
     `, [input.workspaceId, input.projectId, input.pageId]);
     const row = current.rows[0];
     if (!row) throw new FoundationServiceError("NOT_FOUND", "Native page was not found.");
-
     const revision = Number(row.revision);
     if (revision !== input.expectedRevision) {
       throw new FoundationServiceError("REVISION_CONFLICT", "The native page changed after it was read.", {
@@ -186,7 +136,6 @@ async function setLifecycle(
     if (row.status === "unavailable") {
       throw new FoundationServiceError("CONFLICT", "Unavailable pages cannot use the native page lifecycle.");
     }
-
     const now = new Date();
     const archivedAt = targetStatus === "archived" ? now : null;
     await client.query(`
@@ -194,14 +143,15 @@ async function setLifecycle(
       SET status = $1, archived_at = $2, revision = revision + 1,
         updated_by_principal_id = $3, updated_at = $4
       WHERE workspace_id = $5 AND project_id = $6 AND id = $7
-    `, [targetStatus, archivedAt, context.actorPrincipalId, now, input.workspaceId, input.projectId, input.pageId]);
+    `, [targetStatus, archivedAt, context.actorPrincipalId, now,
+      input.workspaceId, input.projectId, input.pageId]);
     await client.query(`
       UPDATE page_tree_nodes
       SET archived_at = $1, revision = revision + 1,
         updated_by_principal_id = $2, updated_at = $3
       WHERE workspace_id = $4 AND project_id = $5 AND page_id = $6
-    `, [archivedAt, context.actorPrincipalId, now, input.workspaceId, input.projectId, input.pageId]);
-
+    `, [archivedAt, context.actorPrincipalId, now,
+      input.workspaceId, input.projectId, input.pageId]);
     const data: NativePageLifecycleResult = {
       pageId: input.pageId,
       status: targetStatus,
@@ -256,10 +206,17 @@ export async function listNativePageRevisions(
   if (input.beforeSequence !== undefined && (!Number.isSafeInteger(input.beforeSequence) || input.beforeSequence < 1)) {
     throw new FoundationServiceError("VALIDATION_FAILED", "Before sequence must be a positive integer.");
   }
-
   return inTransaction(pool, async (client) => {
     await establishTenantContext(client, input.workspaceId, principalId);
-    await authorize(client, input.workspaceId, input.projectId, principalId, "page.read");
+    await authorizePageCapability(client, {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      principalId,
+      capability: "page.read",
+      pageId: input.pageId,
+    });
+    const page = await assertPageExists(client, input.workspaceId, input.projectId, input.pageId);
+    if (page.sourceType !== "native") throw new FoundationServiceError("CONFLICT", "Revision history requires a native page.");
     const result = await client.query<RevisionRow>(`${revisionQuery}
       WHERE npr.workspace_id = $1 AND npr.project_id = $2 AND npr.page_id = $3
         AND p.source_type = 'native'
@@ -267,14 +224,6 @@ export async function listNativePageRevisions(
       ORDER BY npr.sequence DESC
       LIMIT $5
     `, [input.workspaceId, input.projectId, input.pageId, input.beforeSequence ?? null, limit]);
-
-    if (!result.rows.length) {
-      const page = await client.query(`
-        SELECT 1 FROM pages
-        WHERE workspace_id = $1 AND project_id = $2 AND id = $3 AND source_type = 'native'
-      `, [input.workspaceId, input.projectId, input.pageId]);
-      if (!page.rows[0]) throw new FoundationServiceError("NOT_FOUND", "Native page was not found.");
-    }
     return result.rows.map(mapRevisionSummary);
   });
 }
@@ -286,7 +235,13 @@ export async function readNativePageRevision(
 ): Promise<NativePageRevision> {
   return inTransaction(pool, async (client) => {
     await establishTenantContext(client, input.workspaceId, principalId);
-    await authorize(client, input.workspaceId, input.projectId, principalId, "page.read");
+    await authorizePageCapability(client, {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      principalId,
+      capability: "page.read",
+      pageId: input.pageId,
+    });
     const result = await client.query<RevisionRow>(`${revisionQuery}
       WHERE npr.workspace_id = $1 AND npr.project_id = $2
         AND npr.page_id = $3 AND npr.id = $4 AND p.source_type = 'native'
