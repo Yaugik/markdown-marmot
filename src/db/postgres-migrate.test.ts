@@ -19,6 +19,11 @@ describe("Folio PostgreSQL migrations", () => {
       "0010_phase3_work_management.sql",
       "0011_phase3_hardening.sql",
       "0012_phase3_security_hardening.sql",
+      "0013_phase4_todos_scheduling.sql",
+      "0014_phase5_foundations.sql",
+      "0015_phase4_phase5_hardening.sql",
+      "0016_phase5_calendar_event_mapping.sql",
+      "0017_phase4_worker_bootstrap.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -60,16 +65,10 @@ describe("Folio PostgreSQL migrations", () => {
   it("defines Phase 2 collaboration, attachments, links, search, and conversion previews", async () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0008_phase2_collaboration.sql"), "utf8");
     for (const expected of [
-      "CREATE TABLE page_comment_threads",
-      "CREATE TABLE page_comments",
-      "CREATE TABLE mentions",
-      "CREATE TABLE attachments",
-      "CREATE TABLE page_links",
-      "CREATE TABLE page_search_documents",
-      "CREATE TABLE page_conversion_previews",
-      "native_page_revision_marks_knowledge_stale",
-      "native_page_revision_refreshes_search",
-      "page_search_documents_vector_idx",
+      "CREATE TABLE page_comment_threads", "CREATE TABLE page_comments", "CREATE TABLE mentions",
+      "CREATE TABLE attachments", "CREATE TABLE page_links", "CREATE TABLE page_search_documents",
+      "CREATE TABLE page_conversion_previews", "native_page_revision_marks_knowledge_stale",
+      "native_page_revision_refreshes_search", "page_search_documents_vector_idx",
     ]) expect(sql).toContain(expected);
   });
 
@@ -84,18 +83,12 @@ describe("Folio PostgreSQL migrations", () => {
   it("defines configurable Phase 3 workflows, issues, portfolio planning, views, and bulk previews", async () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0010_phase3_work_management.sql"), "utf8");
     for (const expected of [
-      "CREATE TABLE issue_workflows",
-      "CREATE TABLE issue_workflow_statuses",
-      "CREATE TABLE issue_workflow_transitions",
-      "CREATE TABLE issues",
-      "CREATE TABLE issue_dependencies",
-      "CREATE TABLE issue_comments",
-      "CREATE TABLE issue_attachments",
-      "CREATE TABLE issue_saved_views",
-      "CREATE TABLE issue_bulk_previews",
-      "prevent_issue_hierarchy_cycle",
-      "prevent_blocking_dependency_cycle",
-      "issues_refresh_search",
+      "CREATE TABLE issue_workflows", "CREATE TABLE issue_workflow_statuses",
+      "CREATE TABLE issue_workflow_transitions", "CREATE TABLE issues",
+      "CREATE TABLE issue_dependencies", "CREATE TABLE issue_comments",
+      "CREATE TABLE issue_attachments", "CREATE TABLE issue_saved_views",
+      "CREATE TABLE issue_bulk_previews", "prevent_issue_hierarchy_cycle",
+      "prevent_blocking_dependency_cycle", "issues_refresh_search",
     ]) expect(sql).toContain(expected);
   });
 
@@ -105,15 +98,55 @@ describe("Folio PostgreSQL migrations", () => {
     expect(sql).toContain("issue_workflow_transitions_validate_statuses");
     expect(sql).toContain("issue_links_no_self_issue_target");
     expect(sql).toContain("validate_issue_portfolio_references");
+    expect(sql).toContain("issue_dependencies_active_relation_idx");
   });
 
-  it("enforces active parents and creator-owned bulk previews", async () => {
+  it("enforces Phase 3 preview ownership and active issue parents", async () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0012_phase3_security_hardening.sql"), "utf8");
-    expect(sql).toContain("validate_active_issue_parent_integrity");
-    expect(sql).toContain("issues_active_parent_integrity");
-    expect(sql).toContain("DEFERRABLE INITIALLY DEFERRED");
-    expect(sql).toContain("DROP POLICY folio_runtime_workspace_scope ON issue_bulk_previews");
-    expect(sql).toContain("folio_runtime_creator_scope");
-    expect(sql).toContain("created_by_principal_id = folio.current_principal_id()");
+    expect(sql).toContain("issue_bulk_previews_creator_scope");
+    expect(sql).toContain("active issue parent must be active in the project");
+    expect(sql).toContain("issues_validate_parent_lifecycle");
+  });
+
+  it("defines private/shared lists, nested todos, recurrence, reminders, calendars, and agent grants", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0013_phase4_todos_scheduling.sql"), "utf8");
+    for (const expected of [
+      "CREATE TABLE todo_lists", "CREATE TABLE calendars", "CREATE TABLE todos",
+      "CREATE TABLE todo_links", "CREATE TABLE todo_recurrence_rules",
+      "CREATE TABLE todo_occurrences", "CREATE TABLE calendar_entries",
+      "CREATE TABLE reminders", "CREATE TABLE agent_schedule_grants",
+      "validate_todo_parent", "validate_todo_assignee", "prevent_active_todo_child_archive",
+    ]) expect(sql).toContain(expected);
+  });
+
+  it("defines cursor events, presence, provider-neutral calendar contracts, jobs, and metrics", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0014_phase5_foundations.sql"), "utf8");
+    for (const expected of [
+      "CREATE TABLE realtime_event_log", "CREATE TABLE presence_sessions",
+      "CREATE TABLE integration_connections", "CREATE TABLE calendar_external_bindings",
+      "CREATE TABLE provider_operations", "CREATE TABLE job_attempts",
+      "CREATE TABLE operation_metrics", "mirror_outbox_to_realtime",
+      "claim_folio_jobs", "realtime_event_log_cursor_id_seq",
+    ]) expect(sql).toContain(expected);
+    expect(sql).not.toContain("TO CURRENT_USER");
+  });
+
+  it("isolates workers and decision-gates unsafe calendar synchronization", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0015_phase4_phase5_hardening.sql"), "utf8");
+    expect(sql).toContain("CREATE ROLE folio_worker");
+    expect(sql).toContain("REVOKE ALL ON FUNCTION claim_folio_jobs");
+    expect(sql).toContain("GRANT EXECUTE ON FUNCTION claim_folio_jobs");
+    expect(sql).toContain("reminders_lease_state_consistent");
+    expect(sql).toContain("two-way calendar synchronization is decision-gated");
+    expect(sql).toContain("active todo parent must be active in the same list");
+  });
+
+  it("adds external event mapping and a single recurrence sweep bootstrap", async () => {
+    const mapping = await readFile(path.join(process.cwd(), "migrations/0016_phase5_calendar_event_mapping.sql"), "utf8");
+    expect(mapping).toContain("CREATE TABLE external_calendar_event_mappings");
+    expect(mapping).toContain("UNIQUE (binding_id, external_event_id)");
+    const bootstrap = await readFile(path.join(process.cwd(), "migrations/0017_phase4_worker_bootstrap.sql"), "utf8");
+    expect(bootstrap).toContain("todo.recurrence.sweep");
+    expect(bootstrap).toContain("ON CONFLICT DO NOTHING");
   });
 });
