@@ -26,6 +26,10 @@ describe("Folio PostgreSQL migrations", () => {
       "0017_phase4_worker_bootstrap.sql",
       "0018_phase5_reminder_worker_policy.sql",
       "0019_phase5_least_privilege.sql",
+      "0020_phase5_scale_ecosystem.sql",
+      "0021_phase6_graph_canvas_foundations.sql",
+      "0022_phase5_phase6_hardening.sql",
+      "0023_phase5_audit_export_worker.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -160,5 +164,46 @@ describe("Folio PostgreSQL migrations", () => {
     expect(leastPrivilege).toContain("REVOKE UPDATE, DELETE ON TABLE realtime_event_log FROM folio_runtime");
     expect(leastPrivilege).toContain("realtime_event_log_append_only");
     expect(leastPrivilege).toContain("realtime_event_log_no_truncate");
+  });
+
+  it("defines Phase 5 collaboration, scale governance, enterprise policy, exports, and support access", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0020_phase5_scale_ecosystem.sql"), "utf8");
+    for (const expected of [
+      "CREATE TABLE page_collaboration_rooms", "CREATE TABLE page_collaboration_operations",
+      "CREATE TABLE page_collaboration_checkpoints", "CREATE TABLE scale_measurements",
+      "CREATE TABLE scale_decisions", "CREATE TABLE workspace_identity_configs",
+      "CREATE TABLE workspace_residency_policies", "CREATE TABLE audit_export_requests",
+      "CREATE TABLE support_access_grants", "page_collaboration_operations_immutable",
+    ]) expect(sql).toContain(expected);
+  });
+
+  it("defines canonical relationships, saved graph views, and revisioned Canvas scenes", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0021_phase6_graph_canvas_foundations.sql"), "utf8");
+    for (const expected of [
+      "CREATE TABLE relationship_types", "CREATE TABLE entity_relationships",
+      "CREATE TABLE saved_graph_views", "CREATE TABLE canvases",
+      "CREATE TABLE canvas_revisions", "CREATE TABLE canvas_elements",
+      "CREATE TABLE canvas_commands", "CREATE TABLE mermaid_interchange_previews",
+      "entity_relationships_normalize_symmetric", "canvas_revisions_immutable",
+      "canvas_commands_immutable",
+    ]) expect(sql).toContain(expected);
+  });
+
+  it("hardens polymorphic entities, collaboration bases, Canvas revisions, and support confirmation", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0022_phase5_phase6_hardening.sql"), "utf8");
+    expect(sql).toContain("folio_entity_exists");
+    expect(sql).toContain("entity_relationships_validate");
+    expect(sql).toContain("canvas_elements_validate_entity_card");
+    expect(sql).toContain("active support access requires an approved R3 confirmation");
+    expect(sql).toContain("page_collaboration_rooms_validate_base");
+    expect(sql).toContain("canvases_validate_current_revision");
+    expect(sql).toContain("REVOKE UPDATE, DELETE ON TABLE canvas_revisions, canvas_commands");
+  });
+
+  it("grants the isolated audit worker redacted activity reads only", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0023_phase5_audit_export_worker.sql"), "utf8");
+    expect(sql).toContain("GRANT SELECT ON TABLE activity_events TO folio_worker");
+    expect(sql).toContain("folio_worker_activity_export_read");
+    expect(sql).toContain("activity_events_workspace_created_idx");
   });
 });
