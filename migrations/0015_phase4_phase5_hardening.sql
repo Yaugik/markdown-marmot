@@ -1,8 +1,3 @@
-DROP TRIGGER IF EXISTS todos_validate_parent ON todos;
-CREATE TRIGGER todos_validate_parent
-BEFORE INSERT OR UPDATE OF workspace_id, project_id, list_id, parent_todo_id, archived_at ON todos
-FOR EACH ROW EXECUTE FUNCTION validate_todo_parent();
-
 CREATE OR REPLACE FUNCTION validate_todo_parent()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -37,7 +32,11 @@ BEGIN
 END;
 $$;
 
-ALTER TABLE reminders DROP CONSTRAINT reminders_check2;
+DROP TRIGGER IF EXISTS todos_validate_parent ON todos;
+CREATE TRIGGER todos_validate_parent
+BEFORE INSERT OR UPDATE OF workspace_id, project_id, list_id, parent_todo_id, archived_at ON todos
+FOR EACH ROW EXECUTE FUNCTION validate_todo_parent();
+
 ALTER TABLE reminders ADD CONSTRAINT reminders_lease_state_consistent CHECK (
   (state = 'leased' AND leased_until IS NOT NULL AND leased_by IS NOT NULL)
   OR (state <> 'leased' AND leased_until IS NULL AND leased_by IS NULL)
@@ -46,6 +45,25 @@ ALTER TABLE reminders ADD CONSTRAINT reminders_lease_state_consistent CHECK (
 CREATE UNIQUE INDEX todo_occurrences_materialized_todo_idx
   ON todo_occurrences(materialized_todo_id)
   WHERE materialized_todo_id IS NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'folio_worker') THEN
+    CREATE ROLE folio_worker
+      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  END IF;
+  EXECUTE format('GRANT folio_worker TO %I', current_user);
+END
+$$;
+
+GRANT USAGE ON SCHEMA public TO folio_worker;
+GRANT SELECT, UPDATE ON TABLE jobs TO folio_worker;
+GRANT SELECT, INSERT, UPDATE ON TABLE job_attempts TO folio_worker;
+GRANT INSERT ON TABLE operation_metrics TO folio_worker;
+
+CREATE POLICY folio_worker_jobs ON jobs TO folio_worker USING (true) WITH CHECK (true);
+CREATE POLICY folio_worker_attempts ON job_attempts TO folio_worker USING (true) WITH CHECK (true);
+CREATE POLICY folio_worker_metrics ON operation_metrics TO folio_worker USING (true) WITH CHECK (true);
 
 CREATE OR REPLACE FUNCTION claim_folio_jobs(
   worker_name text,
@@ -94,7 +112,8 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION claim_folio_jobs(text, text[], integer, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION claim_folio_jobs(text, text[], integer, integer) TO folio_runtime;
+REVOKE ALL ON FUNCTION claim_folio_jobs(text, text[], integer, integer) FROM folio_runtime;
+GRANT EXECUTE ON FUNCTION claim_folio_jobs(text, text[], integer, integer) TO folio_worker;
 
 DROP POLICY IF EXISTS folio_migration_owner_access ON job_attempts;
 DO $$
