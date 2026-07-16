@@ -49,3 +49,23 @@ $$;
 CREATE TRIGGER outbox_events_normalize_phase6_aggregate
 BEFORE INSERT ON outbox_events
 FOR EACH ROW EXECUTE FUNCTION normalize_phase6_outbox_aggregate();
+
+CREATE OR REPLACE FUNCTION prevent_private_agent_canvas_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE owner_kind text;
+BEGIN
+  IF NEW.visibility <> 'private' THEN RETURN NEW; END IF;
+  SELECT kind INTO owner_kind FROM principals WHERE id=NEW.owner_principal_id;
+  IF owner_kind='agent' THEN
+    RAISE EXCEPTION 'Private Canvases require a human or system owner'
+      USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER canvases_prevent_private_agent_owner
+BEFORE INSERT OR UPDATE OF owner_principal_id,visibility ON canvases
+FOR EACH ROW EXECUTE FUNCTION prevent_private_agent_canvas_owner();
