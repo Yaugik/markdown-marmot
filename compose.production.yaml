@@ -1,0 +1,65 @@
+services:
+  web:
+    image: ${FOLIO_IMAGE:-ghcr.io/example/folio}:${FOLIO_IMAGE_TAG:-latest}
+    command: ["npm", "run", "start"]
+    env_file: [.env.production]
+    environment:
+      DATABASE_CA_CERT_PATH: /run/secrets/postgres-ca.pem
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github-app-private-key.pem
+    secrets:
+      - postgres-ca.pem
+      - github-app-private-key.pem
+    ports:
+      - "127.0.0.1:3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /app/.next/cache:size=256m,mode=0755
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+
+  worker:
+    image: ${FOLIO_IMAGE:-ghcr.io/example/folio}:${FOLIO_IMAGE_TAG:-latest}
+    command: ["npm", "run", "worker"]
+    env_file: [.env.production]
+    environment:
+      DATABASE_CA_CERT_PATH: /run/secrets/postgres-ca.pem
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github-app-private-key.pem
+    secrets:
+      - postgres-ca.pem
+      - github-app-private-key.pem
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.kill(1,0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+
+secrets:
+  postgres-ca.pem:
+    file: ./secrets/postgres-ca.pem
+  github-app-private-key.pem:
+    file: ./secrets/github-app-private-key.pem
