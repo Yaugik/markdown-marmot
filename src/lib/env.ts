@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const booleanString = z.union([z.boolean(), z.enum(["true", "false", "1", "0"])]).transform((value) => value === true || value === "true" || value === "1");
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   FOLIO_PUBLIC_URL: z.string().url().optional(),
@@ -21,7 +23,7 @@ const schema = z.object({
   S3_ACCESS_KEY_ID: z.string().min(1).optional(),
   S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   S3_SESSION_TOKEN: z.string().min(1).optional(),
-  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
+  S3_FORCE_PATH_STYLE: booleanString.default(false),
   S3_KEY_PREFIX: z.string().default("folio"),
   S3_SERVER_SIDE_ENCRYPTION: z.enum(["AES256", "aws:kms"]).optional(),
   S3_KMS_KEY_ID: z.string().min(1).optional(),
@@ -42,7 +44,7 @@ const schema = z.object({
 
   DATABASE_PATH: z.string().min(1).default(".local-data/workspace.sqlite"),
   WORKSPACE_ROOTS: z.string().default(""),
-  LEGACY_IMPORT_ENABLED: z.coerce.boolean().default(false),
+  LEGACY_IMPORT_ENABLED: booleanString.default(false),
   WORKER_POLL_MS: z.coerce.number().int().positive().default(1000),
   WORKER_LEASE_SECONDS: z.coerce.number().int().positive().default(60),
 });
