@@ -22,9 +22,14 @@ async function runReminderJob(job: DurableJob, workerId: string, pool: Pool) {
   const reminder = await inTransaction(pool, async (client) => {
     await establishTenantContext(client, job.workspaceId!, newFolioId());
     const result = await client.query<{
-      id: string; state: string; delivery_channel: "in_app" | "email" | "provider";
-      attempt_count: number; max_attempts: number; created_by_principal_id: string;
-      project_id: string; recipient_principal_id: string;
+      id: string;
+      state: string;
+      delivery_channel: "in_app" | "email" | "provider";
+      attempt_count: number;
+      max_attempts: number;
+      created_by_principal_id: string;
+      project_id: string;
+      recipient_principal_id: string;
     }>(`
       UPDATE reminders
       SET state='leased',attempt_count=attempt_count+1,leased_by=$3,
@@ -49,7 +54,12 @@ async function runReminderJob(job: DurableJob, workerId: string, pool: Pool) {
     }, pool);
     throw new FoundationServiceError("CONFLICT", `${reminder.delivery_channel} reminder delivery is not configured.`);
   }
-  const delivered = await finishReminderAttempt({ workspaceId: job.workspaceId, reminderId, workerId, success: true }, pool);
+  const delivered = await finishReminderAttempt({
+    workspaceId: job.workspaceId,
+    reminderId,
+    workerId,
+    success: true,
+  }, pool);
   await inTransaction(pool, async (client) => {
     await establishTenantContext(client, job.workspaceId!, reminder.recipient_principal_id);
     const requestId = newFolioId();
@@ -59,14 +69,15 @@ async function runReminderJob(job: DurableJob, workerId: string, pool: Pool) {
         action,target_type,target_id,input_summary,result_summary,request_id
       ) VALUES($1,$2,$3,$4,$4,'worker','reminder.delivered','reminder',$5,$6,$7,$8)
     `, [newFolioId(),job.workspaceId,reminder.project_id,reminder.created_by_principal_id,
-      reminderId,{deliveryChannel:"in_app"},{reminderId,recipientPrincipalId:reminder.recipient_principal_id},requestId]);
+      reminderId,{deliveryChannel:"in_app"},
+      {reminderId,recipientPrincipalId:reminder.recipient_principal_id},requestId]);
     await client.query(`
       INSERT INTO outbox_events(
         id,workspace_id,project_id,aggregate_type,aggregate_id,aggregate_revision,event_type,
         actor_principal_id,authorizing_principal_id,request_id,payload
       ) VALUES($1,$2,$3,'reminder',$4,$5,'reminder.delivered.v1',$6,$6,$7,$8)
     `, [newFolioId(),job.workspaceId,reminder.project_id,reminderId,
-      delivered.attemptCount + 1,reminder.created_by_principal_id,requestId,
+      Math.max(1, delivered.attemptCount),reminder.created_by_principal_id,requestId,
       {reminderId,recipientPrincipalId:reminder.recipient_principal_id}]);
   });
   return { reminderId, state: delivered.state };
@@ -74,7 +85,10 @@ async function runReminderJob(job: DurableJob, workerId: string, pool: Pool) {
 
 async function runRecurrenceSweep(job: DurableJob, pool: Pool) {
   const rules = await pool.query<{
-    workspace_id: string; project_id: string; todo_id: string; created_by_principal_id: string;
+    workspace_id: string;
+    project_id: string;
+    todo_id: string;
+    created_by_principal_id: string;
   }>(`
     SELECT workspace_id,project_id,todo_id,created_by_principal_id
     FROM todo_recurrence_rules
@@ -84,11 +98,16 @@ async function runRecurrenceSweep(job: DurableJob, pool: Pool) {
   `);
   const now = new Date();
   const windowStart = dateKey(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())));
-  const windowEndDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 45));
-  const windowEnd = dateKey(windowEndDate);
+  const windowEnd = dateKey(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 45)));
   let expanded = 0;
   let materialized = 0;
   const failures: Array<{ todoId: string; message: string }> = [];
+  const projects = new Map<string, {
+    workspaceId: string;
+    projectId: string;
+    actorPrincipalId: string;
+  }>();
+
   for (const rule of rules.rows) {
     try {
       const occurrences = await ensureTodoOccurrences({
@@ -100,20 +119,36 @@ async function runRecurrenceSweep(job: DurableJob, pool: Pool) {
         limit: 500,
       }, rule.created_by_principal_id, pool);
       expanded += occurrences.length;
-      const result = await materializeDueTodoOccurrences({
+      projects.set(`${rule.workspace_id}:${rule.project_id}`, {
         workspaceId: rule.workspace_id,
         projectId: rule.project_id,
-        through: now.toISOString(),
-        limit: 100,
-      }, rule.created_by_principal_id, pool);
-      materialized += result.materialized.length;
+        actorPrincipalId: rule.created_by_principal_id,
+      });
     } catch (error) {
       failures.push({
         todoId: rule.todo_id,
-        message: error instanceof Error ? error.message.slice(0, 200) : "Recurrence sweep failed.",
+        message: error instanceof Error ? error.message.slice(0, 200) : "Recurrence expansion failed.",
       });
     }
   }
+
+  for (const project of projects.values()) {
+    try {
+      const result = await materializeDueTodoOccurrences({
+        workspaceId: project.workspaceId,
+        projectId: project.projectId,
+        through: now.toISOString(),
+        limit: 500,
+      }, project.actorPrincipalId, pool);
+      materialized += result.materialized.length;
+    } catch (error) {
+      failures.push({
+        todoId: `project:${project.projectId}`,
+        message: error instanceof Error ? error.message.slice(0, 200) : "Recurrence materialization failed.",
+      });
+    }
+  }
+
   const next = new Date(Date.now() + 60 * 60 * 1000);
   const bucket = next.toISOString().slice(0, 13);
   await enqueueDurableJob({
@@ -123,7 +158,14 @@ async function runRecurrenceSweep(job: DurableJob, pool: Pool) {
     availableAt: next.toISOString(),
     maxAttempts: 10,
   }, pool);
-  return { sourceJobId: job.id, rules: rules.rowCount, expanded, materialized, failures };
+  return {
+    sourceJobId: job.id,
+    rules: rules.rowCount,
+    projects: projects.size,
+    expanded,
+    materialized,
+    failures,
+  };
 }
 
 async function executeJob(job: DurableJob, workerId: string, pool: Pool) {
