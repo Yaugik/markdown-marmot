@@ -14,6 +14,8 @@ describe("Folio PostgreSQL migrations", () => {
       "0005_native_pages.sql",
       "0006_native_page_lifecycle.sql",
       "0007_page_tree_management.sql",
+      "0008_phase2_collaboration.sql",
+      "0009_phase2_completion.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -49,6 +51,28 @@ describe("Folio PostgreSQL migrations", () => {
     expect(sql).toContain("page_tree_nodes_rank_nonnegative");
     expect(sql).toContain("page_tree_nodes_folder_title_required");
     expect(sql).toContain("validate_page_tree_parent");
-    expect(sql).toContain("page_tree cycle detected");
+    expect(sql).toContain("page tree cycle detected");
+  });
+
+  it("defines Phase 2 collaboration, attachments, links, search, and conversion previews", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0008_phase2_collaboration.sql"), "utf8");
+    for (const expected of [
+      "CREATE TABLE page_comment_threads",
+      "CREATE TABLE page_comments",
+      "CREATE TABLE mentions",
+      "CREATE TABLE attachments",
+      "CREATE TABLE page_links",
+      "CREATE TABLE page_search_documents",
+      "CREATE TABLE page_conversion_previews",
+      "native_page_revision_marks_knowledge_stale",
+      "native_page_revision_refreshes_search",
+      "page_search_documents_vector_idx",
+    ]) expect(sql).toContain(expected);
+  });
+
+  it("keeps link revision references polymorphic for Git and native pages", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0009_phase2_completion.sql"), "utf8");
+    expect(sql).toContain("DROP CONSTRAINT IF EXISTS page_links_workspace_id_project_id_source_revision_id_fkey");
+    expect(sql).toContain("Application-level polymorphic revision reference");
   });
 });
