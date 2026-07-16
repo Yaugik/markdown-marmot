@@ -70,9 +70,11 @@ describe("Folio PostgreSQL migrations", () => {
     ]) expect(sql).toContain(expected);
   });
 
-  it("keeps link revision references polymorphic for Git and native pages", async () => {
+  it("keeps revision references polymorphic without breaking native triggers", async () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0009_phase2_completion.sql"), "utf8");
     expect(sql).toContain("DROP CONSTRAINT IF EXISTS page_links_workspace_id_project_id_source_revision_id_fkey");
     expect(sql).toContain("Application-level polymorphic revision reference");
+    expect(sql).toContain("source_revision_id IS DISTINCT FROM NEW.id::text");
+    expect(sql).toContain("NEW.plain_text, NEW.id::text, now()");
   });
 });
