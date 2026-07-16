@@ -201,7 +201,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   calendar_external_bindings, provider_operations, job_attempts, operation_metrics
 TO folio_runtime;
 GRANT USAGE, SELECT ON SEQUENCE realtime_event_log_cursor_id_seq TO folio_runtime;
-GRANT EXECUTE ON FUNCTION claim_folio_jobs(text, text[], integer, integer) TO folio_runtime;
 
 DO $$
 DECLARE table_name text; owner_name text;
@@ -223,7 +222,18 @@ $$;
 
 ALTER TABLE job_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_attempts FORCE ROW LEVEL SECURITY;
-CREATE POLICY folio_migration_owner_access ON job_attempts TO CURRENT_USER USING (true) WITH CHECK (true);
+DO $$
+DECLARE owner_name text;
+BEGIN
+  SELECT pg_get_userbyid(c.relowner) INTO owner_name
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname='public' AND c.relname='job_attempts' AND c.relkind='r';
+  EXECUTE format(
+    'CREATE POLICY folio_migration_owner_access ON job_attempts TO %I USING (true) WITH CHECK (true)',
+    owner_name
+  );
+END
+$$;
 CREATE POLICY folio_runtime_job_access ON job_attempts TO folio_runtime
   USING (EXISTS (
     SELECT 1 FROM jobs j
