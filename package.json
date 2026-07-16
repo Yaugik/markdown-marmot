@@ -13,6 +13,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:folio": "tsx scripts/migrate-postgres.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "ops:backup": "node scripts/backup-postgres.mjs",
+    "ops:restore-drill": "node scripts/restore-postgres-drill.mjs",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
