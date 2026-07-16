@@ -13,7 +13,7 @@ const todoTarget = z.object({ entityType: z.literal("todo"), listId: z.string().
 const tool = z.discriminatedUnion("tool", [
   z.object({ tool: z.literal("expand_graph"), roots: z.array(entityRef).min(1).max(50), mode: z.enum(["connected_components","entity_type"]).optional(), depth: z.number().int().min(0).max(5).optional(), nodeLimit: z.number().int().positive().max(1000).optional(), edgeLimit: z.number().int().positive().max(2000).optional() }).strict(),
   z.object({ tool: z.literal("read_canvas_region"), canvasId: z.string().uuid(), bounds, maxElements: z.number().int().positive().max(500).optional() }).strict(),
-  z.object({ tool: z.literal("create_canvas"), title: z.string().trim().min(1).max(200), visibility: z.enum(["private","project"]).optional() }).strict(),
+  z.object({ tool: z.literal("create_canvas"), title: z.string().trim().min(1).max(200), visibility: z.literal("project").default("project") }).strict(),
   z.object({ tool: z.literal("add_entity_to_canvas"), canvasId: z.string().uuid(), entity: entityRef, geometry: z.record(z.unknown()).optional(), content: z.record(z.unknown()).optional() }).strict(),
   z.object({ tool: z.literal("create_sticky"), canvasId: z.string().uuid(), text: z.string().trim().min(1).max(10000), geometry: z.record(z.unknown()).optional(), category: z.string().trim().min(1).max(80).optional() }).strict(),
   z.object({ tool: z.literal("connect_canvas_nodes"), canvasId: z.string().uuid(), fromElementId: z.string().uuid(), toElementId: z.string().uuid(), label: z.string().trim().min(1).max(240).optional() }).strict(),
