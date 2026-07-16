@@ -1,0 +1,11 @@
+import { z } from "zod";
+import { authenticatedRequest, jsonError, jsonSuccess, requestContext } from "@/api";
+import { FoundationServiceError } from "@/services/foundation";
+import { createCanvas, listCanvases } from "@/services/canvas-scenes";
+import { ecosystemMutationContext, ecosystemServiceError, mutationEnvelope } from "../ecosystem/response";
+
+const scope=z.object({workspace_id:z.string().uuid(),project_id:z.string().uuid()}).strict();
+const schema=scope.extend({title:z.string().trim().min(1).max(200),visibility:z.enum(["private","project"]).optional()}).strict();
+export const dynamic="force-dynamic";
+export async function GET(request:Request){const context=requestContext(request);const authenticated=await authenticatedRequest(request,context);if(!authenticated.ok)return authenticated.response;try{const url=new URL(request.url);const input=scope.parse({workspace_id:url.searchParams.get("workspace_id"),project_id:url.searchParams.get("project_id")});return jsonSuccess(await listCanvases({workspaceId:input.workspace_id,projectId:input.project_id},authenticated.session.principalId),context);}catch(error){if(error instanceof z.ZodError)return jsonError("VALIDATION_FAILED",context,400);if(error instanceof FoundationServiceError)return ecosystemServiceError(error,context);return jsonError("OPERATION_FAILED",context,500);}}
+export async function POST(request:Request){const context=requestContext(request);const authenticated=await authenticatedRequest(request,context);if(!authenticated.ok)return authenticated.response;const key=request.headers.get("idempotency-key")?.trim();if(!key)return jsonError("VALIDATION_FAILED",context,400);try{const input=schema.parse(await request.json());const result=await createCanvas({workspaceId:input.workspace_id,projectId:input.project_id,title:input.title,visibility:input.visibility},ecosystemMutationContext(authenticated.session.principalId,context,key));return jsonSuccess(mutationEnvelope("canvas",result),context,result.replayed?200:201);}catch(error){if(error instanceof z.ZodError)return jsonError("VALIDATION_FAILED",context,400);if(error instanceof FoundationServiceError)return ecosystemServiceError(error,context);return jsonError("OPERATION_FAILED",context,500);}}
