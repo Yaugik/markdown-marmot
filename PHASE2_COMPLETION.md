@@ -4,7 +4,7 @@ Updated: 2026-07-16
 
 ## Status
 
-The Phase 2 implementation is complete on `agent/phase-2-native-pages` as a review candidate. The branch remains a draft pull request until CI verifies migrations, lint, strict TypeScript, PostgreSQL integration tests, and the production build.
+The Phase 2 implementation is complete on `agent/phase-2-native-pages` as a review candidate. The pull request remains draft for code review and a full developer-machine application smoke test; verification for the high-risk Phase 2 Markdown and PostgreSQL behavior was performed locally outside GitHub Actions.
 
 ## Delivered
 
@@ -96,15 +96,41 @@ The Phase 2 implementation is complete on `agent/phase-2-native-pages` as a revi
 
 Phase 2 does not duplicate unfinished Phase 1 provider execution. A native-to-Git export is complete when it produces a validated Markdown proposal with provenance and relationship impact. Turning that proposal into a Git commit or pull request requires the Phase 1 GitHub App, repository-link, prepared-change, and Git-operation services.
 
-## Verification gate
+## Local verification
 
-The branch includes GitHub Actions CI with PostgreSQL 16 and these checks:
+Verification was performed in an isolated container without GitHub Actions.
 
-1. `npm ci`
+### Exact-source Markdown harness
+
+The committed `markdown-roundtrip.ts` and `markdown-roundtrip.test.ts` blobs were mirrored locally and verified by Git blob SHA before execution.
+
+- Strict TypeScript compilation passed.
+- 7 rich-Markdown acceptance tests passed.
+- Covered supported GFM, protected front matter/HTML, MDX/directives, malformed fences, stale hashes, protected-block mutation rejection, Unicode, and native/Git mutation boundaries.
+
+### Embedded PostgreSQL migration harness
+
+The committed migration blobs `0005` through `0009` were mirrored locally and verified by Git blob SHA. They were applied in order to an embedded PostgreSQL runtime with the required foundation tables, role, schema, and tenant function.
+
+- All five Phase 2 migrations applied successfully.
+- Immutable native revision updates were rejected.
+- New revisions marked old comment anchors and links stale.
+- Native search projections refreshed to the latest content/revision.
+- Active tree placements for archived pages were rejected.
+- Polymorphic source/current revision columns were confirmed as `text`.
+- Executed conversion previews without `executed_at` were rejected.
+
+The first local migration run exposed a UUID/text comparison bug in the stale-link and search-refresh triggers after polymorphic revision conversion. Migration `0009` now replaces both trigger functions with explicit `NEW.id::text` casts, and a regression assertion was added to `postgres-migrate.test.ts`.
+
+## Remaining review gate
+
+Before merging, run the full repository commands on a developer machine with the complete source checkout and PostgreSQL service:
+
+1. `npm install`
 2. `npm run db:migrate:folio`
 3. `npm run lint`
 4. `npm run typecheck`
 5. `npm run test`
 6. `npm run build`
 
-The pull request should remain draft until this workflow is green and review findings are resolved.
+The current container cannot clone the complete GitHub repository because outbound GitHub DNS is unavailable, and the legacy `better-sqlite3` native build requires external Node headers. Those environment limits do not affect the exact-source Phase 2 Markdown or embedded-PostgreSQL checks documented above.
