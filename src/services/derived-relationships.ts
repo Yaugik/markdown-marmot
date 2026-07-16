@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { postgresPool } from "@/db/postgres";
 import { establishTenantContext } from "@/db/tenant";
 import { newFolioId } from "@/lib/folio-ids";
+import { authorizeAgentEntityRead, authorizeAgentProjectCapability } from "@/services/agent-spatial-access";
 import { authorizeEcosystemProjectCapability, authorizeGraphEntityRead, type GraphEntityType } from "@/services/ecosystem-access";
 import { FoundationServiceError } from "@/services/foundation/errors";
 import { findIdempotentResult, inTransaction, lockIdempotencyKey, recordMutation, requestDigest } from "@/services/foundation/internal";
@@ -58,6 +59,40 @@ function confidence(value: number | null | undefined) {
   return value;
 }
 
+async function authorizeSourceMode(
+  input: {
+    workspaceId: string;
+    projectId: string;
+    sourceKind: DerivationSourceKind;
+    source: { type: GraphEntityType; id: string };
+    candidates: Array<{ target: { type: GraphEntityType; id: string } }>;
+  },
+  context: MutationContext,
+  pool: Pool,
+) {
+  const source = context.source ?? "api";
+  if (source === "agent") {
+    if (input.sourceKind !== "agent_synthesis" || !context.authorizingPrincipalId || context.authorizingPrincipalId === context.actorPrincipalId) {
+      throw new FoundationServiceError("CAPABILITY_DENIED", "Agent-derived relationships require an agent synthesis source and a distinct human authorizer.");
+    }
+    const chain = {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      agentPrincipalId: context.actorPrincipalId,
+      authorizingPrincipalId: context.authorizingPrincipalId,
+    };
+    await authorizeAgentProjectCapability({ ...chain, capability: "relationship.edit" }, pool);
+    await authorizeAgentEntityRead({ ...chain, entityType: input.source.type, entityId: input.source.id }, pool);
+    for (const candidate of input.candidates) {
+      await authorizeAgentEntityRead({ ...chain, entityType: candidate.target.type, entityId: candidate.target.id }, pool);
+    }
+    return;
+  }
+  if (source !== "worker" && source !== "system") {
+    throw new FoundationServiceError("CAPABILITY_DENIED", "Derived relationship rebuilds are limited to workers, systems, and authorized project agents.");
+  }
+}
+
 export async function rebuildDerivedRelationships(
   raw: {
     workspaceId: string;
@@ -88,6 +123,7 @@ export async function rebuildDerivedRelationships(
     throw new FoundationServiceError("VALIDATION_FAILED", "Derived relationship rebuild payload is too large.");
   }
   const input = { ...raw, rebuildKey, source: { ...raw.source, revision: sourceRevision }, candidates };
+  await authorizeSourceMode(input, context, pool);
   const operation = "relationship.derived.rebuild";
   const digest = requestDigest(input);
   const authorizer = context.authorizingPrincipalId ?? context.actorPrincipalId;
