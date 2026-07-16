@@ -14,6 +14,7 @@ const schema = z.object({
   OIDC_REDIRECT_URI: z.string().url().optional(),
   OIDC_STATE_SIGNING_KEY: z.string().min(43).optional(),
   OIDC_SCOPES: z.string().default("openid profile email"),
+  WORKSPACE_INVITATION_SIGNING_KEY: z.string().min(43).optional(),
 
   OBJECT_STORAGE_DRIVER: z.enum(["filesystem", "s3"]).default("filesystem"),
   OBJECT_STORAGE_ROOT: z.string().min(1).default(".local-data/objects"),
@@ -62,6 +63,10 @@ export function folioDatabaseConfigured(): boolean {
 
 export function oidcConfigured(): boolean {
   return Boolean(env.OIDC_ISSUER_URL && env.OIDC_CLIENT_ID && env.OIDC_REDIRECT_URI && env.OIDC_STATE_SIGNING_KEY);
+}
+
+export function workspaceInvitationsConfigured(): boolean {
+  return Boolean(env.WORKSPACE_INVITATION_SIGNING_KEY);
 }
 
 export function objectStorageConfigured(): boolean {
