@@ -1,7 +1,8 @@
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import { newFolioId } from "@/lib/folio-ids";
-import { executeAuditExport, readAuditExportContent, requestAuditExport } from "@/services/audit-exports";
+import { executeAuditExportWithActivity } from "@/services/audit-export-worker";
+import { readAuditExportContent, requestAuditExport } from "@/services/audit-exports";
 import {
   createSupportAccessGrant,
   createWorkspaceIdentityConfig,
@@ -12,7 +13,7 @@ import {
   openPageCollaborationRoomWithSnapshot,
   commitPageCollaborationRoomRecoverably,
 } from "@/services/page-realtime-collaboration-policy";
-import { submitPageCollaborationOperation } from "@/services/page-realtime-collaboration";
+import { submitPageCollaborationOperationSafely } from "@/services/page-realtime-operation-policy";
 import { createNativePage, readNativePage } from "@/services/pages";
 import { createScaleDecision, recordScaleMeasurement } from "@/services/scale-governance";
 
@@ -35,8 +36,11 @@ describeWithPostgres("Phase 5 scale and ecosystem depth",()=>{
 
     const room=await openPageCollaborationRoomWithSnapshot({workspaceId:workspace.data.id,projectId:project.data.id,pageId:page.data.id},context(owner.principalId,suffix,"room"),pool);
     expect(room.data).toMatchObject({room:{currentSequence:0},plainText:"Initial"});
-    const applied=await submitPageCollaborationOperation({workspaceId:workspace.data.id,projectId:project.data.id,roomId:room.data.room.id,clientId:"client-a",clientSequence:1,baseSequence:0,content:doc("Collaborative update")},context(owner.principalId,suffix,"operation"),pool);
+    const applied=await submitPageCollaborationOperationSafely({workspaceId:workspace.data.id,projectId:project.data.id,roomId:room.data.room.id,clientId:"client-a",clientSequence:1,baseSequence:0,content:doc("Collaborative update")},context(owner.principalId,suffix,"operation"),pool);
     expect(applied.data.serverSequence).toBe(1);
+    const replayed=await submitPageCollaborationOperationSafely({workspaceId:workspace.data.id,projectId:project.data.id,roomId:room.data.room.id,clientId:"client-a",clientSequence:1,baseSequence:0,content:doc("Collaborative update")},context(owner.principalId,suffix,"different-header-key"),pool);
+    expect(replayed.replayed).toBe(true);
+    await expect(submitPageCollaborationOperationSafely({workspaceId:workspace.data.id,projectId:project.data.id,roomId:room.data.room.id,clientId:"client-a",clientSequence:1,baseSequence:0,content:doc("Different content")},context(owner.principalId,suffix,"mismatched-retry"),pool)).rejects.toMatchObject({code:"IDEMPOTENCY_CONFLICT"});
     const reopened=await openPageCollaborationRoomWithSnapshot({workspaceId:workspace.data.id,projectId:project.data.id,pageId:page.data.id},context(owner.principalId,suffix,"room-reopen"),pool);
     expect(reopened.data).toMatchObject({plainText:"Collaborative update",room:{currentSequence:1}});
     const committed=await commitPageCollaborationRoomRecoverably({workspaceId:workspace.data.id,projectId:project.data.id,roomId:room.data.room.id},context(owner.principalId,suffix,"commit"),pool);
@@ -61,14 +65,20 @@ describeWithPostgres("Phase 5 scale and ecosystem depth",()=>{
     await pool.query(`INSERT INTO action_confirmations(id,workspace_id,project_id,actor_principal_id,authorizing_principal_id,operation,action_digest,risk_level,preview,status,expires_at,decided_at) VALUES($1,$2,$3,$4,$4,'enterprise.support_access.create',$5,'R3',$6,'approved',now()+interval '1 hour',now())`,[confirmationId,workspace.data.id,project.data.id,owner.principalId,"a".repeat(64),{supportPrincipalId:support.principalId}]);
     const grant=await createSupportAccessGrant({workspaceId:workspace.data.id,supportPrincipalId:support.principalId,confirmationId,reason:"Investigate a customer-reported read-path failure.",capabilities:["project.read","activity.read"],validUntil:new Date(Date.now()+60*60*1000).toISOString()},context(owner.principalId,suffix,"support",{confirmationId}),pool);
     expect(grant.data).toMatchObject({state:"active",confirmationId});
+    const confirmation=await pool.query<{status:string;consumed_at:Date|null}>(`SELECT status,consumed_at FROM action_confirmations WHERE id=$1`,[confirmationId]);
+    expect(confirmation.rows[0]).toMatchObject({status:"consumed"});
+    expect(confirmation.rows[0]?.consumed_at).toBeInstanceOf(Date);
+    await expect(createSupportAccessGrant({workspaceId:workspace.data.id,supportPrincipalId:support.principalId,confirmationId,reason:"Attempted replay.",capabilities:["project.read"],validUntil:new Date(Date.now()+30*60*1000).toISOString()},context(owner.principalId,suffix,"support-replay",{confirmationId}),pool)).rejects.toBeTruthy();
     const activity=await pool.query<{confirmation_id:string|null}>(`SELECT confirmation_id FROM activity_events WHERE target_type='support_access_grant' AND target_id=$1`,[grant.data.id]);
     expect(activity.rows[0]?.confirmation_id).toBe(confirmationId);
 
     const requested=await requestAuditExport({workspaceId:workspace.data.id,projectId:project.data.id,format:"jsonl",filters:{actions:["page_collaboration.commit","enterprise.support_access.create"],limit:1000}},context(owner.principalId,suffix,"audit-export"),pool);
-    const executed=await executeAuditExport(requested.data.id,pool);
+    const executed=await executeAuditExportWithActivity(requested.data.id,pool);
     expect(executed.rowCount).toBeGreaterThanOrEqual(1);
     const content=await readAuditExportContent({workspaceId:workspace.data.id,exportId:requested.data.id},owner.principalId,pool);
     expect(content.content.toString("utf8")).toContain("support_access_grant");
     expect(content.content.toString("utf8")).not.toContain(`secret://identity/${suffix}`);
+    const completedActivity=await pool.query(`SELECT 1 FROM activity_events WHERE action='audit_export.completed' AND target_id=$1`,[requested.data.id]);
+    expect(completedActivity.rows[0]).toBeTruthy();
   });
 });
