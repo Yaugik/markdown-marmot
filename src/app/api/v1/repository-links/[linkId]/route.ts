@@ -1,0 +1,9 @@
+import { z } from "zod";
+import { authenticatedRequest, jsonError, jsonSuccess, requestContext } from "@/api";
+import { updateProjectRepositoryLink } from "@/services/github-repositories";
+import { githubApiError, githubMutationContext } from "../../github/response";
+
+const schema=z.object({workspace_id:z.string().uuid(),project_id:z.string().uuid(),expected_revision:z.number().int().positive(),display_name:z.string().trim().min(1).max(200).optional(),write_policy:z.enum(["disabled","pull_request_only","direct_allowed"]).optional(),include_rules:z.array(z.string().min(1).max(500)).min(1).max(100).optional(),exclude_rules:z.array(z.string().min(1).max(500)).max(100).optional(),state:z.enum(["active","disabled"]).optional()}).strict();
+export const dynamic="force-dynamic";
+
+export async function PATCH(request:Request,{params}:{params:Promise<{linkId:string}>}){const context=requestContext(request);const authenticated=await authenticatedRequest(request,context);if(!authenticated.ok)return authenticated.response;const key=request.headers.get("idempotency-key")?.trim();if(!key)return jsonError("VALIDATION_FAILED",context,400);try{const input=schema.parse(await request.json());const {linkId}=await params;const result=await updateProjectRepositoryLink({workspaceId:input.workspace_id,projectId:input.project_id,linkId:z.string().uuid().parse(linkId),expectedRevision:input.expected_revision,displayName:input.display_name,writePolicy:input.write_policy,includeRules:input.include_rules,excludeRules:input.exclude_rules,state:input.state},githubMutationContext(authenticated.session.principalId,context,key));return jsonSuccess({repository_link:result.data,activity_id:result.activityId,outbox_event_id:result.outboxEventId,replayed:result.replayed},context);}catch(error){if(error instanceof z.ZodError)return jsonError("VALIDATION_FAILED",context,400);return githubApiError(error,context);}}
