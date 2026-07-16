@@ -13,6 +13,15 @@ const schema = z.object({
 }).strict();
 export const dynamic = "force-dynamic";
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export async function GET(request: Request) {
   const context = requestContext(request);
   const authenticated = await authenticatedRequest(request, context);
@@ -33,7 +42,10 @@ export async function GET(request: Request) {
       limit: input.limit,
       includeArchived: input.include_archived === "true",
     }, authenticated.session.principalId);
-    return jsonSuccess(results, context);
+    return jsonSuccess(results.map((result) => ({
+      ...result,
+      snippet: escapeHtml(result.snippet),
+    })), context);
   } catch (error) {
     if (error instanceof z.ZodError) return jsonError("VALIDATION_FAILED", context, 400, {
       fieldErrors: error.issues.map((issue) => ({ field: issue.path.join("."), code: issue.code, message: issue.message })),
