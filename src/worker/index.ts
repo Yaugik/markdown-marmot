@@ -6,6 +6,7 @@ import { jobs } from "@/db/schema";
 import { env, folioDatabaseConfigured } from "@/lib/env";
 import { now } from "@/lib/ids";
 import { syncSource } from "@/services/sync";
+import { runGitHubWorkerCycle } from "@/worker/github-worker";
 import { runScheduleWorkerCycle } from "@/worker/schedule-worker";
 
 async function claimLegacyJob() {
@@ -49,7 +50,12 @@ async function loop(workerId: string) {
     try {
       worked = (await runScheduleWorkerCycle(workerId)) > 0 || worked;
     } catch (error) {
-      console.error(`PostgreSQL worker cycle failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      console.error(`PostgreSQL scheduling worker cycle failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    try {
+      worked = (await runGitHubWorkerCycle(workerId)) > 0 || worked;
+    } catch (error) {
+      console.error(`PostgreSQL GitHub worker cycle failed: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   }
   try {
