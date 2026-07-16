@@ -6,6 +6,7 @@ import { claimDurableJobs, finishDurableJob, type DurableJob } from "@/services/
 import { FoundationServiceError } from "@/services/foundation/errors";
 import { inTransaction } from "@/services/foundation/internal";
 import { reconcileGitHubBranch } from "@/services/github-reconciliation";
+import { executePreparedGitWrite } from "@/services/github-write-worker";
 
 const JOB_KINDS = ["github.repository.refresh", "github.branch.reconcile", "github.write.execute"];
 
@@ -25,7 +26,7 @@ async function refreshRepositories(job:DurableJob,pool:Pool){
   });
   let provider;
   try{provider=await listGitHubInstallationRepositories(Number(installation.provider_installation_id));}
-  catch(error){if(error instanceof GitHubProviderError)throw new FoundationServiceError("CONFLICT",error.message,{providerCode:error.code,retryable:error.retryable});throw error;}
+  catch(error){if(error instanceof GitHubProviderError)throw new FoundationServiceError(error.code==="GITHUB_RATE_LIMITED"?"PROVIDER_RATE_LIMITED":"PROVIDER_UNAVAILABLE",error.message,{providerCode:error.code,retryable:error.retryable});throw error;}
   if(provider.repositories.length>10000)throw new FoundationServiceError("CONFLICT","GitHub installation exposes more repositories than the supported discovery boundary.");
   return workerTransaction(pool,async(client)=>{
     const observed=provider.repositories.map((repository)=>repository.id);
@@ -58,11 +59,16 @@ async function executeJob(job:DurableJob,workerId:string,pool:Pool){
     if(!selectedBranchId)throw new FoundationServiceError("VALIDATION_FAILED","Branch reconciliation job is missing a selected branch ID.");
     return reconcileGitHubBranch({selectedBranchId,workerId,deliveryId:typeof job.payload.deliveryId==="string"?job.payload.deliveryId:undefined,headHint:typeof job.payload.headHint==="string"?job.payload.headHint:undefined},pool);
   }
-  throw new FoundationServiceError("CONFLICT","Git write execution handler is not registered yet.");
+  if(job.kind==="github.write.execute"){
+    const preparedOperationId=typeof job.payload.preparedOperationId==="string"?job.payload.preparedOperationId:null;
+    if(!preparedOperationId)throw new FoundationServiceError("VALIDATION_FAILED","Git write job is missing a prepared operation ID.");
+    return executePreparedGitWrite(preparedOperationId,pool);
+  }
+  throw new FoundationServiceError("CONFLICT","Unsupported GitHub job kind.");
 }
 
 function retryable(error:unknown){
-  if(error instanceof FoundationServiceError)return error.details.retryable===true||error.code==="CONFLICT";
+  if(error instanceof FoundationServiceError)return error.details.retryable===true||error.code==="PROVIDER_RATE_LIMITED"||error.code==="PROVIDER_UNAVAILABLE";
   return true;
 }
 
