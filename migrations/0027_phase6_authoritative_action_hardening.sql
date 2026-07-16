@@ -40,6 +40,10 @@ DECLARE to_id uuid;
 DECLARE relationship_record record;
 DECLARE relationship_symmetric boolean;
 BEGIN
+  IF NEW.archived_at IS NOT NULL THEN
+    NEW.promoted_relationship_id := NULL;
+    RETURN NEW;
+  END IF;
   IF NEW.element_kind <> 'connector' OR NOT (NEW.content ? 'promotedRelationshipId') THEN
     NEW.promoted_relationship_id := NULL;
     RETURN NEW;
