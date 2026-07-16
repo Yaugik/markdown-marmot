@@ -21,6 +21,7 @@ const items = [
   { href: "/search", label: "Search", icon: Search },
   { href: "/pages", label: "Pages", icon: Files },
   { href: "/issues", label: "Issues", icon: CircleCheck },
+  { href: "/schedule", label: "Schedule", icon: CalendarDays },
   { href: "/repositories", label: "Repositories", icon: FolderGit2 },
   { href: "/documents", label: "All documents", icon: FileText },
 ];
@@ -42,12 +43,11 @@ export function Sidebar() {
         ))}
         <p className="nav-label nav-spacer">Organize</p>
         <span className="nav-item muted"><Boxes size={17} /><span>Collections</span><em>Soon</em></span>
-        <span className="nav-item muted"><CalendarDays size={17} /><span>Daily view</span><em>Soon</em></span>
       </nav>
       <div className="sidebar-bottom">
         <div className="agent-card">
           <Sparkles size={16} />
-          <div><strong>Agent-ready</strong><span>Bounded tools, coming next</span></div>
+          <div><strong>Agent-ready</strong><span>Bounded scheduling enabled</span></div>
         </div>
         <button className="profile-row" type="button">
           <span className="avatar">PG</span><span><strong>Personal workspace</strong><small>Local only</small></span><Settings2 size={16} />
