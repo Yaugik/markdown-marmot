@@ -22,8 +22,27 @@ CREATE TABLE relationship_derivation_runs (
   FOREIGN KEY (workspace_id, project_id) REFERENCES projects(workspace_id, id)
 );
 
+ALTER TABLE entity_relationships ADD COLUMN derivation_run_id uuid;
+
+INSERT INTO relationship_derivation_runs(
+  id,workspace_id,project_id,source_kind,source_entity_type,source_entity_id,
+  source_revision,rebuild_key,payload_hash,state,relationship_count,
+  created_by_principal_id,created_at,completed_at
+)
+SELECT relationship.id,relationship.workspace_id,relationship.project_id,
+  'provider_observation',relationship.source_entity_type,relationship.source_entity_id,
+  'legacy-' || relationship.revision::text,'legacy-derived:' || relationship.id::text,
+  repeat('0',64),'succeeded',1,relationship.created_by_principal_id,
+  relationship.created_at,relationship.updated_at
+FROM entity_relationships relationship
+WHERE relationship.provenance='derived'
+ON CONFLICT DO NOTHING;
+
+UPDATE entity_relationships
+SET derivation_run_id=id
+WHERE provenance='derived' AND derivation_run_id IS NULL;
+
 ALTER TABLE entity_relationships
-  ADD COLUMN derivation_run_id uuid,
   ADD CONSTRAINT entity_relationships_derivation_run_fk
     FOREIGN KEY (workspace_id, project_id, derivation_run_id)
     REFERENCES relationship_derivation_runs(workspace_id, project_id, id),
