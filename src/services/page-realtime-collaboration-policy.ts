@@ -20,7 +20,7 @@ import {
 } from "@/services/foundation/internal";
 import type { MutationContext, MutationResult } from "@/services/foundation/types";
 
-type RecoveryRow = {
+type RoomRow = {
   id: string;
   page_id: string;
   state: "active" | "closing" | "closed";
@@ -31,13 +31,15 @@ type RecoveryRow = {
   created_at: Date;
   updated_at: Date;
   closed_at: Date | null;
+};
+type RecoveryRow = RoomRow & {
   checkpoint_hash: string;
   current_revision_id: string;
   current_parent_revision_id: string | null;
   current_content_hash: string;
 };
 
-function mapRoom(row: RecoveryRow): PageCollaborationRoom {
+function mapRoom(row: RoomRow): PageCollaborationRoom {
   return {
     id: row.id,
     pageId: row.page_id,
@@ -156,27 +158,28 @@ export async function commitPageCollaborationRoomRecoverably(
     });
     if (replay) return replay;
 
-    const closed = await client.query<RecoveryRow>(`
+    const closed = await client.query<RoomRow>(`
       UPDATE page_collaboration_rooms room
       SET state='closed',closed_by_principal_id=$4,closed_at=now(),
         revision=revision+1,updated_at=now()
-      FROM native_pages np,native_page_revisions revision,
-        LATERAL (
-          SELECT content_hash FROM page_collaboration_checkpoints
-          WHERE room_id=room.id ORDER BY server_sequence DESC LIMIT 1
-        ) cp
       WHERE room.workspace_id=$1 AND room.project_id=$2 AND room.id=$3
         AND room.state='closing' AND room.current_sequence=$5
-        AND np.workspace_id=room.workspace_id AND np.project_id=room.project_id AND np.page_id=room.page_id
-        AND revision.workspace_id=np.workspace_id AND revision.project_id=np.project_id
-        AND revision.id=np.current_revision_id
-        AND revision.parent_revision_id=room.base_revision_id
-        AND revision.content_hash=cp.content_hash
+        AND EXISTS (
+          SELECT 1
+          FROM native_pages np
+          JOIN native_page_revisions revision
+            ON revision.workspace_id=np.workspace_id AND revision.project_id=np.project_id
+            AND revision.id=np.current_revision_id
+          WHERE np.workspace_id=room.workspace_id AND np.project_id=room.project_id
+            AND np.page_id=room.page_id
+            AND revision.parent_revision_id=room.base_revision_id
+            AND revision.content_hash=(
+              SELECT cp.content_hash FROM page_collaboration_checkpoints cp
+              WHERE cp.room_id=room.id ORDER BY cp.server_sequence DESC LIMIT 1
+            )
+        )
       RETURNING room.id,room.page_id,room.state,room.base_revision_id,room.current_sequence,
-        room.revision,room.created_by_principal_id,room.created_at,room.updated_at,room.closed_at,
-        cp.content_hash checkpoint_hash,np.current_revision_id,
-        revision.parent_revision_id current_parent_revision_id,
-        revision.content_hash current_content_hash
+        room.revision,room.created_by_principal_id,room.created_at,room.updated_at,room.closed_at
     `, [input.workspaceId,input.projectId,input.roomId,context.actorPrincipalId,
       Number(candidate.current_sequence)]);
     const row = closed.rows[0];
