@@ -17,6 +17,23 @@ ALTER TABLE git_snapshots
     (state IN ('published','superseded')) = (published_at IS NOT NULL)
   );
 
+DO $$
+DECLARE constraint_name text;
+BEGIN
+  SELECT conname INTO constraint_name
+  FROM pg_constraint
+  WHERE conrelid='git_snapshots'::regclass
+    AND contype='u'
+    AND pg_get_constraintdef(oid) ILIKE '%selected_branch_id%head_oid%rules_version%parser_version%'
+  LIMIT 1;
+  IF constraint_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE git_snapshots DROP CONSTRAINT %I',constraint_name);
+  END IF;
+END $$;
+CREATE UNIQUE INDEX git_snapshots_active_identity_idx
+  ON git_snapshots(selected_branch_id,head_oid,rules_version,parser_version)
+  WHERE state IN ('candidate','published');
+
 CREATE OR REPLACE FUNCTION folio.lookup_workspace_invitation(
   invitation_digest text,
   accepting_principal_id uuid
@@ -74,6 +91,7 @@ GRANT SELECT ON TABLE github_app_installations,github_repositories,
 GRANT SELECT,INSERT,UPDATE ON TABLE github_webhook_deliveries TO folio_webhook;
 GRANT SELECT,INSERT ON TABLE jobs TO folio_webhook;
 GRANT UPDATE(state,revision,updated_at) ON TABLE github_app_installations TO folio_webhook;
+GRANT DELETE ON TABLE page_search_documents TO folio_worker;
 
 CREATE POLICY folio_webhook_installation_lookup ON github_app_installations
   TO folio_webhook USING (true);
