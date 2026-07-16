@@ -13,6 +13,7 @@ describe("Folio PostgreSQL migrations", () => {
       "0004_auth_schema_repair.sql",
       "0005_native_pages.sql",
       "0006_native_page_lifecycle.sql",
+      "0007_page_tree_management.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -20,30 +21,20 @@ describe("Folio PostgreSQL migrations", () => {
   it("defines the tenant, authorization, concurrency, and audit foundations", async () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0001_folio_foundation.sql"), "utf8");
     for (const expected of [
-      "CREATE TABLE principals",
-      "CREATE TABLE workspaces",
-      "CREATE TABLE projects",
-      "CREATE TABLE project_memberships",
-      "CREATE TABLE capability_grants",
-      "CREATE TABLE object_grants",
-      "CREATE TABLE activity_events",
-      "CREATE TABLE outbox_events",
-      "CREATE TABLE idempotency_records",
-      "CREATE TABLE jobs",
-      "revision bigint",
-      "activity_events_append_only",
+      "CREATE TABLE principals", "CREATE TABLE workspaces", "CREATE TABLE projects",
+      "CREATE TABLE project_memberships", "CREATE TABLE capability_grants",
+      "CREATE TABLE object_grants", "CREATE TABLE activity_events",
+      "CREATE TABLE outbox_events", "CREATE TABLE idempotency_records",
+      "CREATE TABLE jobs", "revision bigint", "activity_events_append_only",
     ]) expect(sql).toContain(expected);
   });
 
   it("defines immutable native pages and project-owned tree placements", async () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0005_native_pages.sql"), "utf8");
     for (const expected of [
-      "CREATE TABLE pages",
-      "CREATE TABLE native_pages",
-      "CREATE TABLE native_page_revisions",
-      "CREATE TABLE page_tree_nodes",
-      "native_page_revisions_immutable",
-      "folio_runtime_workspace_scope",
+      "CREATE TABLE pages", "CREATE TABLE native_pages",
+      "CREATE TABLE native_page_revisions", "CREATE TABLE page_tree_nodes",
+      "native_page_revisions_immutable", "folio_runtime_workspace_scope",
     ]) expect(sql).toContain(expected);
   });
 
@@ -51,5 +42,13 @@ describe("Folio PostgreSQL migrations", () => {
     const sql = await readFile(path.join(process.cwd(), "migrations/0006_native_page_lifecycle.sql"), "utf8");
     expect(sql).toContain("enforce_active_native_page_revision");
     expect(sql).toContain("native_page_revisions_require_active_page");
+  });
+
+  it("enforces folder parentage, non-negative ranks, and acyclic page trees", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0007_page_tree_management.sql"), "utf8");
+    expect(sql).toContain("page_tree_nodes_rank_nonnegative");
+    expect(sql).toContain("page_tree_nodes_folder_title_required");
+    expect(sql).toContain("validate_page_tree_parent");
+    expect(sql).toContain("page_tree cycle detected");
   });
 });
