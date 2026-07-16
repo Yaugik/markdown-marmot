@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { postgresPool } from "@/db/postgres";
 import { establishTenantContext } from "@/db/tenant";
 import { newFolioId } from "@/lib/folio-ids";
+import { executeAuditExport } from "@/services/audit-exports";
 import { runCalendarProviderOperation } from "@/services/calendar-provider-worker";
 import { claimDurableJobs, enqueueDurableJob, finishDurableJob, type DurableJob } from "@/services/durable-jobs";
 import { FoundationServiceError } from "@/services/foundation/errors";
@@ -9,7 +10,7 @@ import { inTransaction } from "@/services/foundation/internal";
 import { claimReminderForDelivery, finishReminderDelivery } from "@/services/reminder-worker";
 import { ensureTodoOccurrences, materializeDueTodoOccurrences } from "@/services/todo-recurrence";
 
-const supportedKinds = ["reminder.delivery", "todo.recurrence.sweep", "calendar.provider_operation"];
+const supportedKinds = ["reminder.delivery", "todo.recurrence.sweep", "calendar.provider_operation", "audit.export"];
 
 function dateKey(date: Date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
@@ -165,6 +166,11 @@ async function executeJob(job: DurableJob, workerId: string, pool: Pool) {
     const operationId = typeof job.payload.operationId === "string" ? job.payload.operationId : null;
     if (!operationId) throw new FoundationServiceError("VALIDATION_FAILED", "Provider job payload is invalid.");
     return runCalendarProviderOperation(operationId, pool);
+  }
+  if (job.kind === "audit.export") {
+    const exportId = typeof job.payload.exportId === "string" ? job.payload.exportId : null;
+    if (!exportId) throw new FoundationServiceError("VALIDATION_FAILED", "Audit export job payload is invalid.");
+    return executeAuditExport(exportId, pool);
   }
   throw new FoundationServiceError("VALIDATION_FAILED", `Unsupported durable job kind: ${job.kind}`);
 }
