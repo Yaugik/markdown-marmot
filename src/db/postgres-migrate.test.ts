@@ -30,6 +30,8 @@ describe("Folio PostgreSQL migrations", () => {
       "0021_phase6_graph_canvas_foundations.sql",
       "0022_phase5_phase6_hardening.sql",
       "0023_phase5_audit_export_worker.sql",
+      "0024_phase5_phase6_final_security.sql",
+      "0025_phase5_phase6_role_capabilities.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -205,5 +207,24 @@ describe("Folio PostgreSQL migrations", () => {
     expect(sql).toContain("GRANT SELECT ON TABLE activity_events TO folio_worker");
     expect(sql).toContain("folio_worker_activity_export_read");
     expect(sql).toContain("activity_events_workspace_created_idx");
+  });
+
+  it("consumes support confirmations once and normalizes symmetric edges deterministically", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0024_phase5_phase6_final_security.sql"), "utf8");
+    expect(sql).toContain("support_access_grants_confirmation_unique");
+    expect(sql).toContain("unexpired approved R3 support confirmation");
+    expect(sql).toContain("enterprise.support_access.create");
+    expect(sql).toContain("consume_support_access_confirmation");
+    expect(sql).toContain("normalize_symmetric_relationship");
+  });
+
+  it("upgrades existing system roles with the new capabilities", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0025_phase5_phase6_role_capabilities.sql"), "utf8");
+    expect(sql).toContain("page.collaborate");
+    expect(sql).toContain("audit.export");
+    expect(sql).toContain("relationship.edit");
+    expect(sql).toContain("canvas.present");
+    expect(sql).toContain("template_key='admin'");
+    expect(sql).toContain("template_key='member'");
   });
 });
