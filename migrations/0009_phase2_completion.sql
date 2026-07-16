@@ -20,3 +20,29 @@ ALTER TABLE page_links
 ALTER TABLE page_conversion_previews
   ADD CONSTRAINT page_conversion_previews_executed_state
   CHECK ((state = 'executed') = (executed_at IS NOT NULL));
+
+CREATE OR REPLACE FUNCTION validate_active_page_tree_placement()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.node_kind IN ('page', 'alias') AND NEW.archived_at IS NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM pages
+      WHERE workspace_id = NEW.workspace_id
+        AND project_id = NEW.project_id
+        AND id = NEW.page_id
+        AND status = 'active'
+    ) THEN
+    RAISE EXCEPTION 'active page tree placement requires an active page'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER page_tree_nodes_require_active_page
+BEFORE INSERT OR UPDATE OF workspace_id, project_id, page_id, archived_at
+ON page_tree_nodes
+FOR EACH ROW EXECUTE FUNCTION validate_active_page_tree_placement();
