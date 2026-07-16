@@ -2,11 +2,24 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, Boxes, CalendarDays, CircleCheck, FileText, FolderGit2, Home, Search, Settings2, Sparkles } from "lucide-react";
+import {
+  BookOpen,
+  Boxes,
+  CalendarDays,
+  CircleCheck,
+  FileText,
+  Files,
+  FolderGit2,
+  Home,
+  Search,
+  Settings2,
+  Sparkles,
+} from "lucide-react";
 
 const items = [
   { href: "/", label: "Home", icon: Home },
   { href: "/search", label: "Search", icon: Search },
+  { href: "/pages", label: "Pages", icon: Files },
   { href: "/repositories", label: "Repositories", icon: FolderGit2 },
   { href: "/documents", label: "All documents", icon: FileText },
 ];
