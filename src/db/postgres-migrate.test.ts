@@ -24,6 +24,8 @@ describe("Folio PostgreSQL migrations", () => {
       "0015_phase4_phase5_hardening.sql",
       "0016_phase5_calendar_event_mapping.sql",
       "0017_phase4_worker_bootstrap.sql",
+      "0018_phase5_reminder_worker_policy.sql",
+      "0019_phase5_least_privilege.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -148,5 +150,15 @@ describe("Folio PostgreSQL migrations", () => {
     const bootstrap = await readFile(path.join(process.cwd(), "migrations/0017_phase4_worker_bootstrap.sql"), "utf8");
     expect(bootstrap).toContain("todo.recurrence.sweep");
     expect(bootstrap).toContain("ON CONFLICT DO NOTHING");
+  });
+
+  it("grants reminder delivery to the worker and keeps realtime events append-only", async () => {
+    const reminderWorker = await readFile(path.join(process.cwd(), "migrations/0018_phase5_reminder_worker_policy.sql"), "utf8");
+    expect(reminderWorker).toContain("GRANT SELECT, UPDATE ON TABLE reminders TO folio_worker");
+    expect(reminderWorker).toContain("CREATE POLICY folio_worker_reminders");
+    const leastPrivilege = await readFile(path.join(process.cwd(), "migrations/0019_phase5_least_privilege.sql"), "utf8");
+    expect(leastPrivilege).toContain("REVOKE UPDATE, DELETE ON TABLE realtime_event_log FROM folio_runtime");
+    expect(leastPrivilege).toContain("realtime_event_log_append_only");
+    expect(leastPrivilege).toContain("realtime_event_log_no_truncate");
   });
 });
