@@ -98,28 +98,30 @@ export async function readCanvasRegion(
     canvasId: input.canvasId,
   }, principalId, pool);
 
-  const regionBox = bounds;
   const visible = new Map<string, CanvasElement>();
   const spatial = scene.elements
     .filter((element) => !["connector", "comment", "vote"].includes(element.kind))
-    .filter((element) => intersects(box(element), regionBox))
+    .filter((element) => intersects(box(element), bounds))
     .sort((a, b) => a.zIndex - b.zIndex || a.id.localeCompare(b.id));
 
-  const truncated = spatial.length > maxElements;
+  let truncated = spatial.length > maxElements;
   for (const element of spatial.slice(0, maxElements)) visible.set(element.id, element);
 
   for (const element of scene.elements) {
+    let eligible = false;
     if (element.kind === "connector") {
       const endpoints = connectorEndpoints(element);
-      if (endpoints.from && endpoints.to && visible.has(endpoints.from) && visible.has(endpoints.to)) {
-        visible.set(element.id, element);
-      }
+      eligible = Boolean(endpoints.from && endpoints.to && visible.has(endpoints.from) && visible.has(endpoints.to));
+    } else if (element.kind === "comment" || element.kind === "vote") {
+      const target = targetElementId(element);
+      eligible = Boolean(target && visible.has(target));
+    }
+    if (!eligible) continue;
+    if (visible.size >= maxElements) {
+      truncated = true;
       continue;
     }
-    if (element.kind === "comment" || element.kind === "vote") {
-      const target = targetElementId(element);
-      if (target && visible.has(target)) visible.set(element.id, element);
-    }
+    visible.set(element.id, element);
   }
 
   const elements = [...visible.values()].sort((a, b) => a.zIndex - b.zIndex || a.id.localeCompare(b.id));
