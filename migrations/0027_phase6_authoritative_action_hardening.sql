@@ -116,6 +116,30 @@ BEFORE INSERT OR UPDATE OF element_kind,content,archived_at
 ON canvas_elements
 FOR EACH ROW EXECUTE FUNCTION validate_promoted_canvas_connector();
 
+CREATE OR REPLACE FUNCTION validate_relationship_derivation_actor()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE actor_kind text;
+BEGIN
+  SELECT kind INTO actor_kind FROM principals WHERE id=NEW.created_by_principal_id;
+  IF NEW.source_kind='agent_synthesis' AND actor_kind <> 'agent' THEN
+    RAISE EXCEPTION 'Agent synthesis derivations require an agent principal'
+      USING ERRCODE='23514';
+  END IF;
+  IF NEW.source_kind<>'agent_synthesis' AND actor_kind <> 'system' THEN
+    RAISE EXCEPTION 'Revision and provider derivations require a system principal'
+      USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER relationship_derivation_runs_validate_actor
+BEFORE INSERT OR UPDATE OF source_kind,created_by_principal_id
+ON relationship_derivation_runs
+FOR EACH ROW EXECUTE FUNCTION validate_relationship_derivation_actor();
+
 CREATE OR REPLACE FUNCTION supersede_relationship_derivation_runs()
 RETURNS trigger
 LANGUAGE plpgsql
