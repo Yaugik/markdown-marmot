@@ -34,6 +34,13 @@ ALTER TABLE issue_links
   ADD CONSTRAINT issue_links_no_self_issue_target
   CHECK (target_issue_id IS NULL OR target_issue_id <> issue_id);
 
+ALTER TABLE issue_dependencies
+  DROP CONSTRAINT issue_dependencies_source_issue_id_target_issue_id_relation_kind_key;
+
+CREATE UNIQUE INDEX issue_dependencies_active_relation_idx
+  ON issue_dependencies (source_issue_id, target_issue_id, relation_kind)
+  WHERE archived_at IS NULL;
+
 CREATE OR REPLACE FUNCTION validate_issue_portfolio_references()
 RETURNS trigger
 LANGUAGE plpgsql
