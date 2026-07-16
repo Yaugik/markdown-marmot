@@ -40,11 +40,7 @@ export function issueResponse(issue: Issue) {
       name: label.name,
       color_key: label.colorKey,
     })),
-    dependencies: issue.dependencies.map((dependency) => ({
-      id: dependency.id,
-      relation_kind: dependency.relationKind,
-    })),
-    relationship_count: issue.dependencies.length,
+    dependencies: [],
     created_by_principal_id: issue.createdByPrincipalId,
     updated_by_principal_id: issue.updatedByPrincipalId,
     created_at: issue.createdAt,
