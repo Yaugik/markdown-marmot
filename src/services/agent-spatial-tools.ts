@@ -2,15 +2,22 @@ import type { Pool } from "pg";
 import { postgresPool } from "@/db/postgres";
 import { FoundationServiceError } from "@/services/foundation/errors";
 import type { MutationContext } from "@/services/foundation/types";
-import { authorizeAgentCanvasCapability, authorizeAgentEntityRead, authorizeAgentProjectCapability, type AgentActorChain } from "@/services/agent-spatial-access";
+import {
+  authorizeAgentCanvasCapability,
+  authorizeAgentEntityRead,
+  authorizeAgentProjectCapability,
+  authorizeAgentTodoListEdit,
+  type AgentActorChain,
+} from "@/services/agent-spatial-access";
 import { executeClusteredGraph, type GraphClusterMode } from "@/services/graph-clustering";
 import { readCanvasRegion, type CanvasRegion, type CanvasRegionBounds } from "@/services/canvas-regions";
-import { createCanvas, applyCanvasCommand, readCanvas } from "@/services/canvas-scenes";
+import { createCanvas, applyCanvasCommand, readCanvas, type CanvasScene } from "@/services/canvas-scenes";
 import {
   prepareConnectorPromotion,
   prepareRegionOrganization,
   prepareStickyConversion,
   readCanvasActionPreview,
+  type CanvasActionPreview,
   type OrganizeMode,
   type StickyConversionTarget,
 } from "@/services/canvas-action-previews";
@@ -71,26 +78,52 @@ function result(
   };
 }
 
+async function readScenesForChain(
+  scope: { workspaceId: string; projectId: string },
+  canvasId: string,
+  chain: AgentActorChain,
+  pool: Pool,
+): Promise<{ agent: CanvasScene; authorizer: CanvasScene }> {
+  const [agent, authorizer] = await Promise.all([
+    readCanvas({ ...scope, canvasId }, chain.agentPrincipalId, pool),
+    readCanvas({ ...scope, canvasId }, chain.authorizingPrincipalId, pool),
+  ]);
+  return { agent, authorizer };
+}
+
+function assertVisibleElementIds(
+  scenes: { agent: CanvasScene; authorizer: CanvasScene },
+  elementIds: string[],
+  label: string,
+) {
+  const ids = [...new Set(elementIds)];
+  const agent = new Set(scenes.agent.elements.map((element) => element.id));
+  const authorizer = new Set(scenes.authorizer.elements.map((element) => element.id));
+  if (!ids.length || ids.some((id) => !agent.has(id) || !authorizer.has(id))) {
+    throw new FoundationServiceError("CAPABILITY_DENIED", `${label} must be visible to both the agent and its authorizing human.`);
+  }
+}
+
 function intersectRegions(agent: CanvasRegion, authorizer: CanvasRegion): CanvasRegion {
   const allowed = new Set(authorizer.elements.map((element) => element.id));
-  const elements = agent.elements.filter((element) => allowed.has(element.id));
-  const elementIds = new Set(elements.map((element) => element.id));
-  const filtered = elements.filter((element) => {
+  const candidateElements = agent.elements.filter((element) => allowed.has(element.id));
+  const candidateIds = new Set(candidateElements.map((element) => element.id));
+  const elements = candidateElements.filter((element) => {
     if (element.kind === "connector") {
       const from = typeof element.content.fromElementId === "string" ? element.content.fromElementId : null;
       const to = typeof element.content.toElementId === "string" ? element.content.toElementId : null;
-      return Boolean(from && to && elementIds.has(from) && elementIds.has(to));
+      return Boolean(from && to && candidateIds.has(from) && candidateIds.has(to));
     }
     if (element.kind === "comment" || element.kind === "vote") {
       const target = typeof element.content.targetElementId === "string" ? element.content.targetElementId : null;
-      return Boolean(target && elementIds.has(target));
+      return Boolean(target && candidateIds.has(target));
     }
     return true;
   });
-  const finalIds = new Set(filtered.map((element) => element.id));
+  const finalIds = new Set(elements.map((element) => element.id));
   return {
     ...agent,
-    elements: filtered,
+    elements,
     accessibleOutline: agent.accessibleOutline.filter((item) => finalIds.has(item.elementId)),
     truncated: agent.truncated || authorizer.truncated,
   };
@@ -127,6 +160,30 @@ async function intersectWorkshop(
     truncated: agent.truncated || authorizer.truncated,
   };
   return { ...filtered, markdown: workshopMarkdown(filtered) };
+}
+
+async function authorizePreviewTarget(
+  scope: { workspaceId: string; projectId: string },
+  preview: CanvasActionPreview,
+  chain: AgentActorChain,
+  pool: Pool,
+) {
+  if (preview.actionKind === "promote_connector") {
+    await authorizeAgentProjectCapability({ ...chain, capability: "relationship.edit" }, pool);
+    return;
+  }
+  if (preview.actionKind !== "convert_sticky") return;
+  const target = preview.normalizedInput.target;
+  if (!target || typeof target !== "object") throw new FoundationServiceError("CONFLICT", "Sticky conversion preview target is invalid.");
+  const value = target as Record<string, unknown>;
+  const entityType = value.entityType;
+  const capability = entityType === "page" ? "page.create" : entityType === "issue" ? "issue.create" : entityType === "todo" ? "todo.create" : null;
+  if (!capability) throw new FoundationServiceError("CONFLICT", "Sticky conversion preview target is invalid.");
+  await authorizeAgentProjectCapability({ ...chain, capability }, pool);
+  if (entityType === "todo") {
+    if (typeof value.listId !== "string") throw new FoundationServiceError("CONFLICT", "To-do conversion preview is missing its list.");
+    await authorizeAgentTodoListEdit({ ...chain, listId: value.listId }, pool);
+  }
 }
 
 export async function executeAgentSpatialTool(
@@ -178,6 +235,7 @@ export async function executeAgentSpatialTool(
 
   if (request.tool === "create_canvas") {
     await authorizeAgentProjectCapability({ ...chain, capability: "canvas.create" }, pool);
+    if (request.visibility === "project") await authorizeAgentProjectCapability({ ...chain, capability: "project.update" }, pool);
     const created = await createCanvas({ ...scope, title: request.title, visibility: request.visibility }, context, pool);
     return result(request, chain, created, "R1", ["add_entity_to_canvas", "create_sticky"]);
   }
@@ -209,13 +267,11 @@ export async function executeAgentSpatialTool(
 
   if (request.tool === "connect_canvas_nodes") {
     await authorizeAgentCanvasCapability({ ...chain, canvasId: request.canvasId, capability: "canvas.edit" }, pool);
-    const scene = await readCanvas({ ...scope, canvasId: request.canvasId }, chain.agentPrincipalId, pool);
-    const ids = new Set(scene.elements.map((element) => element.id));
-    if (!ids.has(request.fromElementId) || !ids.has(request.toElementId) || request.fromElementId === request.toElementId) {
-      throw new FoundationServiceError("VALIDATION_FAILED", "Connector endpoints must be two distinct visible elements.");
-    }
+    const scenes = await readScenesForChain(scope, request.canvasId, chain, pool);
+    assertVisibleElementIds(scenes, [request.fromElementId,request.toElementId], "Connector endpoints");
+    if (request.fromElementId === request.toElementId) throw new FoundationServiceError("VALIDATION_FAILED", "Connector endpoints must be distinct.");
     const applied = await applyCanvasCommand({
-      ...scope, canvasId: request.canvasId, expectedRevision: scene.revision,
+      ...scope, canvasId: request.canvasId, expectedRevision: scenes.agent.revision,
       clientId: `agent:${chain.agentPrincipalId}`, clientSequence: Date.now(),
       command: { type: "element.create", element: { kind: "connector", content: { fromElementId: request.fromElementId, toElementId: request.toElementId, label: request.label?.trim().slice(0,240) || undefined } } },
     }, context, pool);
@@ -224,6 +280,8 @@ export async function executeAgentSpatialTool(
 
   if (request.tool === "organize_canvas_region") {
     await authorizeAgentCanvasCapability({ ...chain, canvasId: request.canvasId, capability: "canvas.edit" }, pool);
+    const scenes = await readScenesForChain(scope, request.canvasId, chain, pool);
+    assertVisibleElementIds(scenes, request.elementIds, "Organization targets");
     const prepared = await prepareRegionOrganization({ ...scope, canvasId: request.canvasId, elementIds: request.elementIds, mode: request.mode, gap: request.gap, columns: request.columns }, context, pool);
     return result(request, chain, prepared, prepared.data.riskLevel === "R2" ? "R2" : "R1", [prepared.data.confirmationId ? "approve_canvas_action" : "execute_canvas_action"]);
   }
@@ -231,6 +289,8 @@ export async function executeAgentSpatialTool(
   if (request.tool === "promote_connector_to_relationship") {
     await authorizeAgentCanvasCapability({ ...chain, canvasId: request.canvasId, capability: "canvas.edit" }, pool);
     await authorizeAgentProjectCapability({ ...chain, capability: "relationship.edit" }, pool);
+    const scenes = await readScenesForChain(scope, request.canvasId, chain, pool);
+    assertVisibleElementIds(scenes, [request.connectorElementId], "Connector promotion target");
     const prepared = await prepareConnectorPromotion({ ...scope, canvasId: request.canvasId, connectorElementId: request.connectorElementId, relationshipTypeId: request.relationshipTypeId }, context, pool);
     return result(request, chain, prepared, "R1", ["execute_canvas_action"]);
   }
@@ -239,15 +299,27 @@ export async function executeAgentSpatialTool(
     await authorizeAgentCanvasCapability({ ...chain, canvasId: request.canvasId, capability: "canvas.edit" }, pool);
     const capability = request.target.entityType === "page" ? "page.create" : request.target.entityType === "issue" ? "issue.create" : "todo.create";
     await authorizeAgentProjectCapability({ ...chain, capability }, pool);
+    if (request.target.entityType === "todo") await authorizeAgentTodoListEdit({ ...chain, listId: request.target.listId }, pool);
+    const scenes = await readScenesForChain(scope, request.canvasId, chain, pool);
+    assertVisibleElementIds(scenes, [request.stickyElementId], "Sticky conversion target");
     const prepared = await prepareStickyConversion({ ...scope, canvasId: request.canvasId, stickyElementId: request.stickyElementId, target: request.target, addEntityCard: request.addEntityCard }, context, pool);
     return result(request, chain, prepared, "R1", ["execute_canvas_action"]);
   }
 
   if (request.tool === "execute_canvas_action") {
-    const preview = await readCanvasActionPreview({ ...scope, previewId: request.previewId }, chain.agentPrincipalId, pool);
-    await authorizeAgentCanvasCapability({ ...chain, canvasId: preview.canvasId, capability: "canvas.edit" }, pool);
+    const [agentPreview, authorizerPreview] = await Promise.all([
+      readCanvasActionPreview({ ...scope, previewId: request.previewId }, chain.agentPrincipalId, pool),
+      readCanvasActionPreview({ ...scope, previewId: request.previewId }, chain.authorizingPrincipalId, pool),
+    ]);
+    if (agentPreview.actionDigest !== authorizerPreview.actionDigest || agentPreview.canvasId !== authorizerPreview.canvasId) {
+      throw new FoundationServiceError("CAPABILITY_DENIED", "The preview is not shared by the complete actor chain.");
+    }
+    await authorizeAgentCanvasCapability({ ...chain, canvasId: agentPreview.canvasId, capability: "canvas.edit" }, pool);
+    const scenes = await readScenesForChain(scope, agentPreview.canvasId, chain, pool);
+    assertVisibleElementIds(scenes, agentPreview.sourceElementIds, "Canvas action sources");
+    await authorizePreviewTarget(scope, agentPreview, chain, pool);
     const executed = await executeCanvasActionPreview({ ...scope, previewId: request.previewId }, context, pool);
-    return result(request, chain, executed, preview.riskLevel === "R2" ? "R2" : "R1", ["read_canvas_region"]);
+    return result(request, chain, executed, agentPreview.riskLevel === "R2" ? "R2" : "R1", ["read_canvas_region"]);
   }
 
   await authorizeAgentCanvasCapability({ ...chain, canvasId: request.canvasId, capability: "canvas.read" }, pool);
