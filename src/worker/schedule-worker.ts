@@ -6,8 +6,8 @@ import { runCalendarProviderOperation } from "@/services/calendar-provider-worke
 import { claimDurableJobs, enqueueDurableJob, finishDurableJob, type DurableJob } from "@/services/durable-jobs";
 import { FoundationServiceError } from "@/services/foundation/errors";
 import { inTransaction } from "@/services/foundation/internal";
+import { claimReminderForDelivery, finishReminderDelivery } from "@/services/reminder-worker";
 import { ensureTodoOccurrences, materializeDueTodoOccurrences } from "@/services/todo-recurrence";
-import { finishReminderAttempt } from "@/services/reminders";
 
 const supportedKinds = ["reminder.delivery", "todo.recurrence.sweep", "calendar.provider_operation"];
 
@@ -19,67 +19,57 @@ async function runReminderJob(job: DurableJob, workerId: string, pool: Pool) {
   if (!job.workspaceId) throw new FoundationServiceError("VALIDATION_FAILED", "Reminder job requires a workspace.");
   const reminderId = typeof job.payload.reminderId === "string" ? job.payload.reminderId : null;
   if (!reminderId) throw new FoundationServiceError("VALIDATION_FAILED", "Reminder job payload is invalid.");
-  const reminder = await inTransaction(pool, async (client) => {
-    await establishTenantContext(client, job.workspaceId!, newFolioId());
-    const result = await client.query<{
-      id: string;
-      state: string;
-      delivery_channel: "in_app" | "email" | "provider";
-      attempt_count: number;
-      max_attempts: number;
-      created_by_principal_id: string;
-      project_id: string;
-      recipient_principal_id: string;
-    }>(`
-      UPDATE reminders
-      SET state='leased',attempt_count=attempt_count+1,leased_by=$3,
-        leased_until=now()+interval '60 seconds',updated_at=now()
-      WHERE workspace_id=$1 AND id=$2 AND remind_at<=now() AND available_at<=now()
-        AND (state='pending' OR state='failed' OR (state='leased' AND leased_until<now()))
-        AND attempt_count<max_attempts
-      RETURNING id,state,delivery_channel,attempt_count,max_attempts,
-        created_by_principal_id,project_id,recipient_principal_id
-    `, [job.workspaceId, reminderId, workerId]);
-    return result.rows[0] ?? null;
-  });
+
+  const reminder = await claimReminderForDelivery({
+    workspaceId: job.workspaceId,
+    reminderId,
+    workerId,
+  }, pool);
   if (!reminder) return { reminderId, state: "already_terminal_or_not_due" };
-  if (reminder.delivery_channel !== "in_app") {
-    await finishReminderAttempt({
+
+  if (reminder.deliveryChannel !== "in_app") {
+    await finishReminderDelivery({
       workspaceId: job.workspaceId,
       reminderId,
       workerId,
       success: false,
       errorCode: "DELIVERY_ADAPTER_MISSING",
-      errorMessage: `${reminder.delivery_channel} reminder delivery is not configured.`,
+      errorMessage: `${reminder.deliveryChannel} reminder delivery is not configured.`,
     }, pool);
-    throw new FoundationServiceError("CONFLICT", `${reminder.delivery_channel} reminder delivery is not configured.`);
+    throw new FoundationServiceError(
+      "CONFLICT",
+      `${reminder.deliveryChannel} reminder delivery is not configured.`,
+    );
   }
-  const delivered = await finishReminderAttempt({
+
+  const delivered = await finishReminderDelivery({
     workspaceId: job.workspaceId,
     reminderId,
     workerId,
     success: true,
   }, pool);
+
   await inTransaction(pool, async (client) => {
-    await establishTenantContext(client, job.workspaceId!, reminder.recipient_principal_id);
+    await establishTenantContext(client, job.workspaceId!, reminder.recipientPrincipalId);
     const requestId = newFolioId();
     await client.query(`
       INSERT INTO activity_events(
         id,workspace_id,project_id,actor_principal_id,authorizing_principal_id,source,
         action,target_type,target_id,input_summary,result_summary,request_id
       ) VALUES($1,$2,$3,$4,$4,'worker','reminder.delivered','reminder',$5,$6,$7,$8)
-    `, [newFolioId(),job.workspaceId,reminder.project_id,reminder.created_by_principal_id,
+    `, [newFolioId(),job.workspaceId,reminder.projectId,reminder.createdByPrincipalId,
       reminderId,{deliveryChannel:"in_app"},
-      {reminderId,recipientPrincipalId:reminder.recipient_principal_id},requestId]);
+      {reminderId,recipientPrincipalId:reminder.recipientPrincipalId},requestId]);
     await client.query(`
       INSERT INTO outbox_events(
         id,workspace_id,project_id,aggregate_type,aggregate_id,aggregate_revision,event_type,
         actor_principal_id,authorizing_principal_id,request_id,payload
       ) VALUES($1,$2,$3,'reminder',$4,$5,'reminder.delivered.v1',$6,$6,$7,$8)
-    `, [newFolioId(),job.workspaceId,reminder.project_id,reminderId,
-      Math.max(1, delivered.attemptCount),reminder.created_by_principal_id,requestId,
-      {reminderId,recipientPrincipalId:reminder.recipient_principal_id}]);
+    `, [newFolioId(),job.workspaceId,reminder.projectId,reminderId,
+      Math.max(1, delivered.attemptCount),reminder.createdByPrincipalId,requestId,
+      {reminderId,recipientPrincipalId:reminder.recipientPrincipalId}]);
   });
+
   return { reminderId, state: delivered.state };
 }
 
