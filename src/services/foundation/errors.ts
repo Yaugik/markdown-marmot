@@ -3,6 +3,7 @@ export type FoundationErrorCode =
   | "NOT_FOUND"
   | "CAPABILITY_DENIED"
   | "IDEMPOTENCY_CONFLICT"
+  | "REVISION_CONFLICT"
   | "CONFLICT";
 
 export class FoundationServiceError extends Error {
