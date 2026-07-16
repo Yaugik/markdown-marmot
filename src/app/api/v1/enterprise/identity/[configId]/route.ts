@@ -1,0 +1,9 @@
+import { z } from "zod";
+import { authenticatedRequest, jsonError, jsonSuccess, requestContext } from "@/api";
+import { FoundationServiceError } from "@/services/foundation";
+import { updateWorkspaceIdentityConfig } from "@/services/enterprise-controls";
+import { ecosystemMutationContext, ecosystemServiceError, mutationEnvelope } from "../../../ecosystem/response";
+
+const schema=z.object({workspace_id:z.string().uuid(),expected_revision:z.number().int().positive(),state:z.enum(["draft","active","disabled","archived"]).optional(),display_name:z.string().trim().min(1).max(120).optional(),allowed_domains:z.array(z.string()).max(100).optional(),attribute_mapping:z.record(z.unknown()).optional()}).strict();
+export const dynamic="force-dynamic";
+export async function PATCH(request:Request,{params}:{params:Promise<{configId:string}>}){const context=requestContext(request);const authenticated=await authenticatedRequest(request,context);if(!authenticated.ok)return authenticated.response;const key=request.headers.get("idempotency-key")?.trim();if(!key)return jsonError("VALIDATION_FAILED",context,400);try{const {configId}=await params;const input=schema.parse(await request.json());const result=await updateWorkspaceIdentityConfig({workspaceId:input.workspace_id,configId:z.string().uuid().parse(configId),expectedRevision:input.expected_revision,state:input.state,displayName:input.display_name,allowedDomains:input.allowed_domains,attributeMapping:input.attribute_mapping},ecosystemMutationContext(authenticated.session.principalId,context,key));return jsonSuccess(mutationEnvelope("identity",result),context,result.replayed?200:201);}catch(error){if(error instanceof z.ZodError)return jsonError("VALIDATION_FAILED",context,400);if(error instanceof FoundationServiceError)return ecosystemServiceError(error,context);return jsonError("OPERATION_FAILED",context,500);}}
