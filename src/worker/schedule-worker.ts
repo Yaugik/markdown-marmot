@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 import { postgresPool } from "@/db/postgres";
 import { establishTenantContext } from "@/db/tenant";
 import { newFolioId } from "@/lib/folio-ids";
-import { executeAuditExport } from "@/services/audit-exports";
+import { executeAuditExportWithActivity } from "@/services/audit-export-worker";
 import { runCalendarProviderOperation } from "@/services/calendar-provider-worker";
 import { claimDurableJobs, enqueueDurableJob, finishDurableJob, type DurableJob } from "@/services/durable-jobs";
 import { FoundationServiceError } from "@/services/foundation/errors";
@@ -170,7 +170,7 @@ async function executeJob(job: DurableJob, workerId: string, pool: Pool) {
   if (job.kind === "audit.export") {
     const exportId = typeof job.payload.exportId === "string" ? job.payload.exportId : null;
     if (!exportId) throw new FoundationServiceError("VALIDATION_FAILED", "Audit export job payload is invalid.");
-    return executeAuditExport(exportId, pool);
+    return executeAuditExportWithActivity(exportId, pool);
   }
   throw new FoundationServiceError("VALIDATION_FAILED", `Unsupported durable job kind: ${job.kind}`);
 }
