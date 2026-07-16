@@ -18,6 +18,7 @@ describe("Folio PostgreSQL migrations", () => {
       "0009_phase2_completion.sql",
       "0010_phase3_work_management.sql",
       "0011_phase3_hardening.sql",
+      "0012_phase3_security_hardening.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -104,5 +105,15 @@ describe("Folio PostgreSQL migrations", () => {
     expect(sql).toContain("issue_workflow_transitions_validate_statuses");
     expect(sql).toContain("issue_links_no_self_issue_target");
     expect(sql).toContain("validate_issue_portfolio_references");
+  });
+
+  it("enforces active parents and creator-owned bulk previews", async () => {
+    const sql = await readFile(path.join(process.cwd(), "migrations/0012_phase3_security_hardening.sql"), "utf8");
+    expect(sql).toContain("validate_active_issue_parent_integrity");
+    expect(sql).toContain("issues_active_parent_integrity");
+    expect(sql).toContain("DEFERRABLE INITIALLY DEFERRED");
+    expect(sql).toContain("DROP POLICY folio_runtime_workspace_scope ON issue_bulk_previews");
+    expect(sql).toContain("folio_runtime_creator_scope");
+    expect(sql).toContain("created_by_principal_id = folio.current_principal_id()");
   });
 });
