@@ -22,7 +22,20 @@ const createSchema = scopeSchema.extend({
   assignee_ids: z.array(z.string().uuid()).max(100).optional(),
   label_ids: z.array(z.string().uuid()).max(100).optional(),
 }).strict();
-const csv = (value: string | null) => value ? value.split(",").map((item) => item.trim()).filter(Boolean) : undefined;
+const uuidCsv = z.string().transform((value) => value.split(",").map((item) => item.trim()).filter(Boolean)).pipe(z.array(z.string().uuid()).max(100));
+const priorityCsv = z.string().transform((value) => value.split(",").map((item) => item.trim()).filter(Boolean)).pipe(z.array(z.enum(["no_priority", "urgent", "high", "medium", "low"])).max(5));
+const listSchema = scopeSchema.extend({
+  include_archived: z.enum(["true", "false"]).optional(),
+  status_ids: uuidCsv.optional(),
+  label_ids: uuidCsv.optional(),
+  assignee_ids: uuidCsv.optional(),
+  priorities: priorityCsv.optional(),
+  milestone_id: z.string().uuid().optional(),
+  cycle_id: z.string().uuid().optional(),
+  parent_issue_id: z.string().uuid().optional(),
+  q: z.string().trim().min(1).max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+}).strict();
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
@@ -31,22 +44,35 @@ export async function GET(request: Request) {
   if (!authenticated.ok) return authenticated.response;
   try {
     const url = new URL(request.url);
-    const scope = scopeSchema.parse({ workspace_id: url.searchParams.get("workspace_id"), project_id: url.searchParams.get("project_id") });
-    const pages = await listIssues({
-      workspaceId: scope.workspace_id,
-      projectId: scope.project_id,
-      includeArchived: url.searchParams.get("include_archived") === "true",
-      statusIds: csv(url.searchParams.get("status_ids")),
-      labelIds: csv(url.searchParams.get("label_ids")),
-      assigneeIds: csv(url.searchParams.get("assignee_ids")),
-      priorities: csv(url.searchParams.get("priorities")) as Array<"no_priority" | "urgent" | "high" | "medium" | "low"> | undefined,
-      milestoneId: url.searchParams.get("milestone_id") ?? undefined,
-      cycleId: url.searchParams.get("cycle_id") ?? undefined,
-      parentIssueId: url.searchParams.get("parent_issue_id") ?? undefined,
-      query: url.searchParams.get("q") ?? undefined,
-      limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+    const input = listSchema.parse({
+      workspace_id: url.searchParams.get("workspace_id"),
+      project_id: url.searchParams.get("project_id"),
+      include_archived: url.searchParams.get("include_archived") ?? undefined,
+      status_ids: url.searchParams.get("status_ids") ?? undefined,
+      label_ids: url.searchParams.get("label_ids") ?? undefined,
+      assignee_ids: url.searchParams.get("assignee_ids") ?? undefined,
+      priorities: url.searchParams.get("priorities") ?? undefined,
+      milestone_id: url.searchParams.get("milestone_id") ?? undefined,
+      cycle_id: url.searchParams.get("cycle_id") ?? undefined,
+      parent_issue_id: url.searchParams.get("parent_issue_id") ?? undefined,
+      q: url.searchParams.get("q") ?? undefined,
+      limit: url.searchParams.get("limit") ?? undefined,
+    });
+    const issues = await listIssues({
+      workspaceId: input.workspace_id,
+      projectId: input.project_id,
+      includeArchived: input.include_archived === "true",
+      statusIds: input.status_ids,
+      labelIds: input.label_ids,
+      assigneeIds: input.assignee_ids,
+      priorities: input.priorities,
+      milestoneId: input.milestone_id,
+      cycleId: input.cycle_id,
+      parentIssueId: input.parent_issue_id,
+      query: input.q,
+      limit: input.limit,
     }, authenticated.session.principalId);
-    return jsonSuccess(pages.map(issueResponse), context);
+    return jsonSuccess(issues.map(issueResponse), context);
   } catch (error) {
     if (error instanceof z.ZodError) return jsonError("VALIDATION_FAILED", context, 400, { fieldErrors: error.issues.map((issue) => ({ field: issue.path.join("."), code: issue.code, message: issue.message })) });
     if (error instanceof FoundationServiceError) return issueServiceError(error, context);
