@@ -2,7 +2,7 @@ import { z } from "zod";
 import { authenticatedRequest, jsonError, jsonSuccess, requestContext } from "@/api";
 import { FoundationServiceError } from "@/services/foundation";
 import { editNativePage, readNativePage } from "@/services/pages";
-import { pageResponse, pageServiceError } from "../route";
+import { pageResponse, pageServiceError } from "../response";
 
 const scopeSchema = z.object({ workspace_id: z.string().uuid(), project_id: z.string().uuid() }).strict();
 const editSchema = scopeSchema.extend({
