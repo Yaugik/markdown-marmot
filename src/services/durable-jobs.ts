@@ -137,11 +137,25 @@ export async function enqueueDurableJob(
   if (Number.isNaN(available.getTime())) {
     throw new FoundationServiceError("VALIDATION_FAILED", "Job availability time is invalid.");
   }
-  const result = await pool.query<{ id: string }>(`
-    INSERT INTO jobs(id,workspace_id,project_id,kind,payload,deduplication_key,status,priority,max_attempts,available_at)
-    VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9)
-    ON CONFLICT DO NOTHING RETURNING id
-  `, [id,input.workspaceId ?? null,input.projectId ?? null,input.kind,input.payload,
-    input.deduplicationKey ?? null,input.priority ?? 100,input.maxAttempts ?? 5,available.toISOString()]);
-  return result.rows[0]?.id ?? id;
+  return inTransaction(pool, async (client) => {
+    const inserted = await client.query<{ id: string }>(`
+      INSERT INTO jobs(id,workspace_id,project_id,kind,payload,deduplication_key,status,priority,max_attempts,available_at)
+      VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9)
+      ON CONFLICT DO NOTHING RETURNING id
+    `, [id,input.workspaceId ?? null,input.projectId ?? null,input.kind,input.payload,
+      input.deduplicationKey ?? null,input.priority ?? 100,input.maxAttempts ?? 5,available.toISOString()]);
+    if (inserted.rows[0]) return inserted.rows[0].id;
+    if (!input.deduplicationKey) {
+      throw new FoundationServiceError("CONFLICT", "Durable job could not be enqueued.");
+    }
+    const existing = await client.query<{ id: string }>(`
+      SELECT id FROM jobs
+      WHERE kind=$1 AND deduplication_key=$2 AND status IN ('pending','running')
+        AND workspace_id IS NOT DISTINCT FROM $3::uuid
+        AND project_id IS NOT DISTINCT FROM $4::uuid
+      ORDER BY created_at LIMIT 1
+    `, [input.kind,input.deduplicationKey,input.workspaceId ?? null,input.projectId ?? null]);
+    if (!existing.rows[0]) throw new FoundationServiceError("CONFLICT", "Deduplicated durable job was not found.");
+    return existing.rows[0].id;
+  });
 }
