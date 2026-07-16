@@ -5,6 +5,7 @@ export type FoundationDatabase = Pool | PoolClient;
 export type MutationContext = {
   actorPrincipalId: string;
   authorizingPrincipalId?: string;
+  confirmationId?: string;
   requestId: string;
   traceId: string;
   idempotencyKey: string;

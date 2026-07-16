@@ -1,0 +1,11 @@
+import { z } from "zod";
+import { authenticatedRequest, jsonError, jsonSuccess, requestContext } from "@/api";
+import { FoundationServiceError } from "@/services/foundation";
+import { listAuditExports, requestAuditExport } from "@/services/audit-exports";
+import { ecosystemMutationContext, ecosystemServiceError, mutationEnvelope } from "../ecosystem/response";
+
+const scope=z.object({workspace_id:z.string().uuid(),project_id:z.string().uuid().nullable().optional()}).strict();
+const schema=scope.extend({format:z.enum(["jsonl","csv"]),filters:z.record(z.unknown()).optional(),expires_in_hours:z.number().int().min(1).max(168).optional()}).strict();
+export const dynamic="force-dynamic";
+export async function GET(request:Request){const context=requestContext(request);const authenticated=await authenticatedRequest(request,context);if(!authenticated.ok)return authenticated.response;try{const url=new URL(request.url);const input=scope.parse({workspace_id:url.searchParams.get("workspace_id"),project_id:url.searchParams.get("project_id")||null});return jsonSuccess(await listAuditExports({workspaceId:input.workspace_id,projectId:input.project_id},authenticated.session.principalId),context);}catch(error){if(error instanceof z.ZodError)return jsonError("VALIDATION_FAILED",context,400);if(error instanceof FoundationServiceError)return ecosystemServiceError(error,context);return jsonError("OPERATION_FAILED",context,500);}}
+export async function POST(request:Request){const context=requestContext(request);const authenticated=await authenticatedRequest(request,context);if(!authenticated.ok)return authenticated.response;const key=request.headers.get("idempotency-key")?.trim();if(!key)return jsonError("VALIDATION_FAILED",context,400);try{const input=schema.parse(await request.json());const result=await requestAuditExport({workspaceId:input.workspace_id,projectId:input.project_id,format:input.format,filters:input.filters,expiresInHours:input.expires_in_hours},ecosystemMutationContext(authenticated.session.principalId,context,key));return jsonSuccess(mutationEnvelope("audit_export",result),context,result.replayed?200:202);}catch(error){if(error instanceof z.ZodError)return jsonError("VALIDATION_FAILED",context,400);if(error instanceof FoundationServiceError)return ecosystemServiceError(error,context);return jsonError("OPERATION_FAILED",context,500);}}

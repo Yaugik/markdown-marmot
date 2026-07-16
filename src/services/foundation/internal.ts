@@ -131,13 +131,14 @@ export async function recordMutation<T>(
     INSERT INTO activity_events (
       id, workspace_id, project_id, actor_principal_id, authorizing_principal_id,
       source, action, target_type, target_id, input_summary, result_summary,
-      request_id, trace_id
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      request_id, trace_id, confirmation_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
   `, [
     activityId, input.workspaceId, input.projectId ?? null, input.context.actorPrincipalId,
     input.context.authorizingPrincipalId ?? input.context.actorPrincipalId,
     input.context.source ?? "api", input.action, input.targetType, input.targetId,
     input.inputSummary, input.resultSummary, input.context.requestId, input.context.traceId,
+    input.context.confirmationId ?? null,
   ]);
   await client.query(`
     INSERT INTO outbox_events (

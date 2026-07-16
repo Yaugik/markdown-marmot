@@ -11,6 +11,7 @@ import {
   Files,
   FolderGit2,
   Home,
+  Network,
   Search,
   Settings2,
   Sparkles,
@@ -22,6 +23,7 @@ const items = [
   { href: "/pages", label: "Pages", icon: Files },
   { href: "/issues", label: "Issues", icon: CircleCheck },
   { href: "/schedule", label: "Schedule", icon: CalendarDays },
+  { href: "/map", label: "Map & Canvas", icon: Network },
   { href: "/repositories", label: "Repositories", icon: FolderGit2 },
   { href: "/documents", label: "All documents", icon: FileText },
 ];
@@ -47,7 +49,7 @@ export function Sidebar() {
       <div className="sidebar-bottom">
         <div className="agent-card">
           <Sparkles size={16} />
-          <div><strong>Agent-ready</strong><span>Bounded scheduling enabled</span></div>
+          <div><strong>Agent-ready</strong><span>Bounded scheduling, graph, and Canvas tools</span></div>
         </div>
         <button className="profile-row" type="button">
           <span className="avatar">PG</span><span><strong>Personal workspace</strong><small>Local only</small></span><Settings2 size={16} />

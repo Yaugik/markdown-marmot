@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { authenticatedRequest, jsonError, jsonSuccess, requestContext } from "@/api";
+import { readEcosystemRealtimeEvents } from "@/services/ecosystem-realtime";
 import { FoundationServiceError } from "@/services/foundation";
-import { readRealtimeEvents } from "@/services/realtime";
 import { scheduleServiceError } from "../schedule/response";
 
 const scopeSchema = z.object({ workspace_id: z.string().uuid(), project_id: z.string().uuid() }).strict();
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url); const scope = scopeSchema.parse({ workspace_id: url.searchParams.get("workspace_id"), project_id: url.searchParams.get("project_id") });
     const topicId = url.searchParams.get("topic_id");
-    const result = await readRealtimeEvents({ workspaceId: scope.workspace_id, projectId: scope.project_id,
+    const result = await readEcosystemRealtimeEvents({ workspaceId: scope.workspace_id, projectId: scope.project_id,
       afterCursor: Math.max(0, Number(url.searchParams.get("after_cursor") ?? 0)),
       limit: Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 100), 500)),
       topicType: url.searchParams.get("topic_type") ?? undefined,
